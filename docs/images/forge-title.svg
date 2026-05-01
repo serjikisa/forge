@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 70">
+  <defs>
+    <linearGradient id="molten" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffd666"/>
+      <stop offset="40%" stop-color="#f5a623"/>
+      <stop offset="100%" stop-color="#c0400a"/>
+    </linearGradient>
+    <filter id="heavy">
+      <feDropShadow dx="0" dy="5" stdDeviation="2" flood-color="#000" flood-opacity="0.9"/>
+    </filter>
+  </defs>
+  <!-- Thick dark outline for mass -->
+  <text x="6" y="56" font-family="'Impact','Arial Black',sans-serif" font-size="68" font-weight="900" letter-spacing="10" stroke="#1a0a00" stroke-width="6" fill="none">FORGE</text>
+  <!-- Molten orange fill -->
+  <text x="6" y="56" font-family="'Impact','Arial Black',sans-serif" font-size="68" font-weight="900" letter-spacing="10" fill="url(#molten)" filter="url(#heavy)">FORGE</text>
+</svg>

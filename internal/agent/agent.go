@@ -1,0 +1,348 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"runtime"
+	"strings"
+
+	"github.com/serjikisa/forge/internal/provider"
+	"github.com/serjikisa/forge/internal/tool"
+	"github.com/serjikisa/forge/internal/tui"
+)
+
+type Agent struct {
+	provider provider.Provider
+	tools    []tool.Tool
+	toolMap  map[string]tool.Tool
+	tui      *tui.TUI
+	history  []provider.Message
+	model    string
+	noTools  bool
+}
+
+func New(p provider.Provider, tools []tool.Tool, ui *tui.TUI, model string) *Agent {
+	tm := make(map[string]tool.Tool, len(tools))
+	for _, t := range tools {
+		tm[t.Name()] = t
+	}
+	return &Agent{
+		provider: p,
+		tools:    tools,
+		toolMap:  tm,
+		tui:      ui,
+		history:  []provider.Message{{Role: "system", Content: systemPrompt()}},
+		model:    model,
+	}
+}
+
+func (a *Agent) Run(ctx context.Context) {
+	a.tui.PrintBanner()
+	a.tui.StreamToken("\n")
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		input, ok := a.tui.ReadInput()
+		if !ok {
+			return
+		}
+		if input == "" {
+			continue
+		}
+
+		// Slash commands
+		switch {
+		case input == "/exit" || input == "/quit":
+			return
+		case input == "/help" || input == "/":
+			a.tui.PrintHelp()
+			continue
+		case input == "/clear":
+			a.history = a.history[:1] // keep system prompt
+			a.tui.Info("conversation cleared")
+			continue
+		case input == "/model":
+			a.tui.Info(fmt.Sprintf("provider: %s, model: %s", a.provider.Name(), a.model))
+			continue
+		case strings.HasPrefix(input, "/model "):
+			name := strings.TrimSpace(strings.TrimPrefix(input, "/model "))
+			if name == "ls" || name == "list" {
+				models, err := a.provider.ListModels(ctx)
+				if err != nil {
+					a.tui.Error(err.Error())
+				} else {
+					for _, m := range models {
+						if m.Name == a.model {
+							a.tui.Info(fmt.Sprintf("  %s (active)", m.Name))
+						} else {
+							a.tui.Info(fmt.Sprintf("  %s", m.Name))
+						}
+					}
+				}
+				continue
+			}
+			if sw, ok := a.provider.(provider.ModelSwitcher); ok {
+				// Validate model exists
+				models, err := a.provider.ListModels(ctx)
+				if err == nil {
+					found := false
+					for _, m := range models {
+						if m.Name == name || m.ID == name {
+							found = true
+							break
+						}
+					}
+					if !found {
+						a.tui.Error(fmt.Sprintf("model %q not found. Use /model ls to list available models", name))
+						continue
+					}
+				}
+				sw.SetModel(name)
+				a.model = name
+				a.noTools = false
+				a.tui.Info(fmt.Sprintf("switched to %s", name))
+			} else {
+				a.tui.Error("provider does not support model switching")
+			}
+			continue
+		}
+
+		a.history = append(a.history, provider.Message{Role: "user", Content: input})
+		a.runLoop(ctx)
+	}
+}
+
+func (a *Agent) Ask(ctx context.Context, prompt string) {
+	a.history = append(a.history, provider.Message{Role: "user", Content: prompt})
+	a.runLoop(ctx)
+}
+
+func (a *Agent) runLoop(ctx context.Context) {
+	// Create a cancellable context for this job
+	jobCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Listen for Ctrl+C to cancel the current job
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	go func() {
+		select {
+		case <-sigCh:
+			cancel()
+		case <-jobCtx.Done():
+		}
+		signal.Stop(sigCh)
+	}()
+
+	for {
+		a.tui.StartSpinner("thinking...")
+		tools := a.toolDefs()
+		if a.noTools {
+			tools = nil
+		}
+		events, err := a.provider.ChatCompletion(jobCtx, provider.ChatRequest{
+			Messages: a.history,
+			Tools:    tools,
+		})
+		if err != nil {
+			a.tui.StopSpinner()
+			if jobCtx.Err() != nil {
+				a.tui.Info("cancelled")
+				return
+			}
+			// Retry without tools if model doesn't support them
+			if !a.noTools && strings.Contains(err.Error(), "does not support tools") {
+				a.noTools = true
+				a.tui.Info("model does not support tools, continuing without them")
+				continue
+			}
+			a.tui.Error(err.Error())
+			return
+		}
+
+		text, toolCalls := a.consumeStream(events)
+
+		if jobCtx.Err() != nil {
+			a.tui.Info("cancelled")
+			return
+		}
+
+		if text != "" {
+			a.history = append(a.history, provider.Message{Role: "assistant", Content: text})
+		}
+
+		if len(toolCalls) == 0 {
+			a.tui.EndStream()
+			return
+		}
+
+		// Add assistant message with tool calls
+		a.history = append(a.history, provider.Message{
+			Role:      "assistant",
+			ToolCalls: toolCalls,
+		})
+
+		// Execute tools and add results
+		for _, tc := range toolCalls {
+			result := a.executeTool(ctx, tc)
+			a.history = append(a.history, provider.Message{
+				Role:       "tool",
+				Content:    result,
+				ToolCallID: tc.ID,
+			})
+		}
+		// Loop back to get the next response
+	}
+}
+
+func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provider.ToolCall) {
+	var text strings.Builder
+	var toolCalls []provider.ToolCall
+	streaming := false
+	spinnerStopped := false
+
+	for ev := range events {
+		if !spinnerStopped {
+			a.tui.StopSpinner()
+			spinnerStopped = true
+		}
+		switch ev.Type {
+		case provider.EventText:
+			if !streaming {
+				a.tui.StreamToken("  ")
+				streaming = true
+			}
+			a.tui.StreamToken(ev.Text)
+			text.WriteString(ev.Text)
+		case provider.EventToolCall:
+			if ev.ToolCall != nil {
+				toolCalls = append(toolCalls, *ev.ToolCall)
+			}
+		case provider.EventError:
+			a.tui.Error(ev.Error.Error())
+		case provider.EventDone:
+			// done
+		}
+	}
+
+	if streaming {
+		a.tui.StreamToken("\n")
+	}
+
+	return text.String(), toolCalls
+}
+
+func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
+	t, ok := a.toolMap[tc.Name]
+	if !ok {
+		msg := fmt.Sprintf("unknown tool: %s", tc.Name)
+		a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
+		return msg
+	}
+
+	// Check safety
+	if t.Safety() >= tool.NeedsConfirmation {
+		detail := string(tc.Arguments)
+		if isDangerous(t, tc) {
+			detail = tui.Red(detail)
+		}
+		prompt := fmt.Sprintf("%s wants to run: %s", tc.Name, detail)
+		if !a.tui.Confirm(prompt) {
+			msg := "denied by user"
+			a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
+			return msg
+		}
+	}
+
+	a.tui.ToolStart(tc.Name, summarizeArgs(tc.Arguments))
+
+	result, err := t.Execute(ctx, tc.Arguments)
+	if err != nil {
+		a.tui.ToolError(tc.Name, err)
+		return fmt.Sprintf("error: %s", err)
+	}
+
+	a.tui.ToolDone(tc.Name, truncate(result, 60))
+	slog.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
+	return result
+}
+
+func isDangerous(t tool.Tool, tc provider.ToolCall) bool {
+	if t.Name() != "shell_exec" {
+		return false
+	}
+	var p struct{ Command string `json:"command"` }
+	json.Unmarshal(tc.Arguments, &p)
+	lower := strings.ToLower(p.Command)
+	for _, pat := range []string{"rm -rf", "rm -r", "git push --force", "git reset --hard", "drop table", "chmod 777"} {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *Agent) toolDefs() []provider.ToolDef {
+	defs := make([]provider.ToolDef, len(a.tools))
+	for i, t := range a.tools {
+		defs[i] = provider.ToolDef{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  t.Schema(),
+		}
+	}
+	return defs
+}
+
+func summarizeArgs(args json.RawMessage) string {
+	var m map[string]any
+	if json.Unmarshal(args, &m) == nil {
+		if p, ok := m["path"]; ok {
+			return fmt.Sprintf("%v", p)
+		}
+		if c, ok := m["command"]; ok {
+			return truncate(fmt.Sprintf("%v", c), 60)
+		}
+		if p, ok := m["pattern"]; ok {
+			return fmt.Sprintf("%v", p)
+		}
+	}
+	return truncate(string(args), 60)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func systemPrompt() string {
+	dir, _ := os.Getwd()
+	return fmt.Sprintf(`You are Forge, a terminal-based AI coding assistant. You help developers write, debug, and understand code directly from the command line.
+
+You are direct and concise. You write complete, working code. You explain your reasoning when making decisions.
+
+You have access to tools to interact with the user's system. Use them when you need to inspect or modify the project. Read files before making claims about their contents.
+
+Rules:
+- Read code before editing it.
+- Show what you changed and why.
+- For destructive operations, explain what will happen.
+- Keep responses concise.
+- If a task requires multiple steps, outline your plan first.
+- Do not fabricate file contents or command outputs.
+- Before considering any task done, run: go build ./... && go test ./... -count=1 && go test -race ./... -count=1
+
+Current directory: %s
+Operating system: %s/%s`, dir, runtime.GOOS, runtime.GOARCH)
+}

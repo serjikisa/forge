@@ -1,6 +1,6 @@
-# Forge
+<img src="docs/images/forge-title.svg" alt="FORGE" height="64"><img src="docs/images/forge-banner.png" alt="" width="180">
 
-A terminal-based AI coding agent built in Go. Fast, beautiful, concurrent.
+A terminal-based AI coding agent built in Go. Fast, beautiful, concurrent.</p>
 
 Works with local LLMs (Ollama) and cloud providers (OpenAI, Anthropic, AWS Bedrock, DeepSeek, Alibaba Cloud).
 

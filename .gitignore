@@ -1,6 +1,6 @@
 # Binaries
 bin/
-forge
+/forge
 *.exe
 
 # Build artifacts
