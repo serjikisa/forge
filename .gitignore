@@ -2,6 +2,7 @@
 bin/
 /forge
 *.exe
+out
 
 # Build artifacts
 coverage.out
