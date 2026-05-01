@@ -11,6 +11,7 @@ import (
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/config"
 	"github.com/serjikisa/forge/internal/provider"
+	"github.com/serjikisa/forge/internal/server"
 	"github.com/serjikisa/forge/internal/tool"
 	"github.com/serjikisa/forge/internal/tui"
 )
@@ -18,10 +19,6 @@ import (
 var version = "dev"
 
 func main() {
-	// In raw terminal mode, Ctrl+C is handled by x/term as byte 0x03.
-	// Ignore SIGINT so it doesn't kill the process.
-	signal.Ignore(os.Interrupt)
-
 	cfg := config.Load()
 	setupLogger(cfg.LogLevel, cfg.LogFormat)
 
@@ -35,14 +32,21 @@ func main() {
 
 	switch cmd {
 	case "chat":
+		// In raw terminal mode, Ctrl+C is handled by x/term as byte 0x03.
+		// Ignore SIGINT so it doesn't kill the process.
+		signal.Ignore(os.Interrupt)
 		runChat(ctx, cfg)
 	case "ask":
+		signal.Ignore(os.Interrupt)
 		runAsk(ctx, cfg)
+	case "serve":
+		runServe(ctx, cfg)
 	case "models":
 		runModels(ctx, cfg)
 	case "version":
 		fmt.Println("forge", version)
 	default:
+		signal.Ignore(os.Interrupt)
 		runChat(ctx, cfg)
 	}
 }
@@ -58,6 +62,9 @@ func runChat(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if hasFlag("--yes", "-y") {
+		a.SetAutoApprove(true)
+	}
 	a.Run(ctx)
 }
 
@@ -94,7 +101,44 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if hasFlag("--yes", "-y") {
+		a.SetAutoApprove(true)
+	}
 	a.Ask(ctx, prompt)
+}
+
+func runServe(_ context.Context, cfg *config.Config) {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	port := fs.Int("port", 8080, "port to listen on")
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	prov, model := resolveProviderModel(cfg)
+	p := newProvider(cfg, prov, model)
+	if o, ok := p.(*provider.Ollama); ok && model == "" {
+		model = o.Model()
+	}
+
+	s := server.New(p, model)
+	addr := fmt.Sprintf(":%d", *port)
+	fmt.Fprintf(os.Stderr, "forge serve • %s/%s • http://localhost%s\n", prov, model, addr)
+	fmt.Fprintf(os.Stderr, "Press Ctrl+C to stop\n")
+
+	// Graceful shutdown on SIGINT/SIGTERM
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt)
+	go func() {
+		<-sigCh
+		fmt.Fprintf(os.Stderr, "\nshutting down...\n")
+		os.Exit(0)
+	}()
+
+	if err := s.ListenAndServe(addr); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runModels(ctx context.Context, cfg *config.Config) {
@@ -181,4 +225,15 @@ func setupLogger(level, format string) {
 		handler = slog.NewTextHandler(os.Stderr, opts)
 	}
 	slog.SetDefault(slog.New(handler))
+}
+
+func hasFlag(flags ...string) bool {
+	for _, arg := range os.Args[1:] {
+		for _, f := range flags {
+			if arg == f {
+				return true
+			}
+		}
+	}
+	return false
 }

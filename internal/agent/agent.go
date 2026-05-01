@@ -18,13 +18,14 @@ type Agent struct {
 	provider provider.Provider
 	tools    []tool.Tool
 	toolMap  map[string]tool.Tool
-	tui      *tui.TUI
+	tui      tui.UI
 	history  []provider.Message
 	model    string
-	noTools  bool
+	noTools     bool
+	autoApprove bool
 }
 
-func New(p provider.Provider, tools []tool.Tool, ui *tui.TUI, model string) *Agent {
+func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
 	tm := make(map[string]tool.Tool, len(tools))
 	for _, t := range tools {
 		tm[t.Name()] = t
@@ -38,6 +39,8 @@ func New(p provider.Provider, tools []tool.Tool, ui *tui.TUI, model string) *Age
 		model:    model,
 	}
 }
+
+func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
 
 func (a *Agent) Run(ctx context.Context) {
 	a.tui.PrintBanner()
@@ -246,7 +249,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 	}
 
 	// Check safety
-	if t.Safety() >= tool.NeedsConfirmation {
+	if !a.autoApprove && t.Safety() >= tool.NeedsConfirmation {
 		detail := string(tc.Arguments)
 		if isDangerous(t, tc) {
 			detail = tui.Red(detail)
