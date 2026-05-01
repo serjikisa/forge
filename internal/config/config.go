@@ -1,0 +1,107 @@
+// Package config loads forge configuration from ~/.forge/config.json with
+// environment variable expansion and sensible defaults.
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+)
+
+type Config struct {
+	DefaultProvider string              `json:"default_provider"`
+	Theme           string              `json:"theme"`
+	LogLevel        string              `json:"log_level"`
+	LogFormat       string              `json:"log_format"`
+	MaxConcurrency  int                 `json:"max_concurrency"`
+	ShellTimeout    int                 `json:"shell_timeout"`
+	Providers       map[string]Provider `json:"providers"`
+	ModelPrompts    map[string]string   `json:"model_prompts,omitempty"`
+}
+
+type Provider struct {
+	Host    string `json:"host,omitempty"`
+	BaseURL string `json:"base_url,omitempty"`
+	APIKey  string `json:"api_key,omitempty"`
+	Model   string `json:"model"`
+	Region  string `json:"region,omitempty"`
+}
+
+func Load() *Config {
+	cfg := defaults()
+
+	path := configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			createDefault(path, cfg)
+		}
+		return cfg
+	}
+
+	expanded := os.ExpandEnv(string(data))
+	if err := json.Unmarshal([]byte(expanded), cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: config %s: %v (using defaults)\n", path, err)
+		return defaults()
+	}
+
+	if cfg.MaxConcurrency < 1 {
+		cfg.MaxConcurrency = 5
+	}
+	if cfg.ShellTimeout < 1 {
+		cfg.ShellTimeout = 120
+	}
+
+	return cfg
+}
+
+func createDefault(path string, cfg *Config) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func defaults() *Config {
+	return &Config{
+		DefaultProvider: "ollama",
+		Theme:           "vibrant",
+		LogLevel:        getEnv("FORGE_LOG_LEVEL", "info"),
+		LogFormat:        getEnv("FORGE_LOG_FORMAT", "pretty"),
+		MaxConcurrency:  5,
+		ShellTimeout:    120,
+		Providers: map[string]Provider{
+			"ollama": {
+				Host:  "http://localhost:11434",
+				Model: "", // auto-detect from installed models
+			},
+		},
+	}
+}
+
+func configPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".forge", "config.json")
+}
+
+func getEnv(key, fallback string) string {
+	if val, ok := os.LookupEnv(key); ok {
+		return val
+	}
+	return fallback
+}
+
+func MustGetEnv(key string) string {
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		log.Fatalf("required environment variable %s is not set", key)
+	}
+	return val
+}

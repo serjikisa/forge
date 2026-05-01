@@ -1,0 +1,24 @@
+# Binaries
+bin/
+/forge
+*.exe
+out
+
+# Build artifacts
+coverage.out
+coverage.html
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+.kiro/
+*.swp
+*.swo
+
+# Environment
+.env
+c.out
