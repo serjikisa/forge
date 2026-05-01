@@ -25,6 +25,8 @@ func TestColorFunctions(t *testing.T) {
 		{"Dim", Dim, "2"},
 		{"Bold", Bold, "1"},
 		{"BoldCyan", BoldCyan, "1;36"},
+		{"Orange", Orange, "38;5;208"},
+		{"BoldOrange", BoldOrange, "1;38;5;208"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,4 +104,40 @@ func TestNoColorEnvVar(t *testing.T) {
 	// but the logic should be: noColor = os.Getenv("NO_COLOR") != ""
 	_ = expected // just verify it compiles and the var exists
 	_ = noColor
+}
+
+func TestActionVerb(t *testing.T) {
+	tests := []struct {
+		tool string
+		want string
+	}{
+		{"read_file", "Read"},
+		{"write_file", "Write"},
+		{"list_directory", "Read"},
+		{"shell_exec", "Shell"},
+		{"search_code", "Search"},
+		{"unknown_tool", "unknown_tool"},
+	}
+	for _, tt := range tests {
+		if got := actionVerb(tt.tool); got != tt.want {
+			t.Errorf("actionVerb(%q) = %q, want %q", tt.tool, got, tt.want)
+		}
+	}
+}
+
+func TestShortPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{"/Users/dev/project/main.go", "main.go"},
+		{"main.go", "main.go"},
+		{"/a/b/c", "c"},
+		{".", "."},
+	}
+	for _, tt := range tests {
+		if got := shortPath(tt.path); got != tt.want {
+			t.Errorf("shortPath(%q) = %q, want %q", tt.path, got, tt.want)
+		}
+	}
 }

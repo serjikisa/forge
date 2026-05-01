@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"runtime"
 	"strings"
 
@@ -118,6 +117,7 @@ func (a *Agent) Run(ctx context.Context) {
 
 		a.history = append(a.history, provider.Message{Role: "user", Content: input})
 		a.runLoop(ctx)
+		a.tui.ResetSigCount()
 	}
 }
 
@@ -127,21 +127,6 @@ func (a *Agent) Ask(ctx context.Context, prompt string) {
 }
 
 func (a *Agent) runLoop(ctx context.Context) {
-	// Create a cancellable context for this job
-	jobCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	// Listen for Ctrl+C to cancel the current job
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt)
-	go func() {
-		select {
-		case <-sigCh:
-			cancel()
-		case <-jobCtx.Done():
-		}
-		signal.Stop(sigCh)
-	}()
 
 	for {
 		a.tui.StartSpinner("thinking...")
@@ -149,13 +134,13 @@ func (a *Agent) runLoop(ctx context.Context) {
 		if a.noTools {
 			tools = nil
 		}
-		events, err := a.provider.ChatCompletion(jobCtx, provider.ChatRequest{
+		events, err := a.provider.ChatCompletion(ctx, provider.ChatRequest{
 			Messages: a.history,
 			Tools:    tools,
 		})
 		if err != nil {
 			a.tui.StopSpinner()
-			if jobCtx.Err() != nil {
+			if ctx.Err() != nil {
 				a.tui.Info("cancelled")
 				return
 			}
@@ -171,7 +156,7 @@ func (a *Agent) runLoop(ctx context.Context) {
 
 		text, toolCalls := a.consumeStream(events)
 
-		if jobCtx.Err() != nil {
+		if ctx.Err() != nil {
 			a.tui.Info("cancelled")
 			return
 		}
@@ -238,6 +223,17 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		a.tui.StreamToken("\n")
 	}
 
+	// If no native tool calls, check if the model emitted tool calls as text
+	if len(toolCalls) == 0 && text.Len() > 0 {
+		knownTools := make(map[string]bool, len(a.toolMap))
+		for name := range a.toolMap {
+			knownTools[name] = true
+		}
+		if parsed, remaining := parseTextToolCalls(text.String(), knownTools); len(parsed) > 0 {
+			return remaining, parsed
+		}
+	}
+
 	return text.String(), toolCalls
 }
 
@@ -263,6 +259,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 		}
 	}
 
+	// Kiro-style: show "● Read /path" or "● Shell command"
 	a.tui.ToolStart(tc.Name, summarizeArgs(tc.Arguments))
 
 	result, err := t.Execute(ctx, tc.Arguments)
@@ -271,9 +268,65 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 		return fmt.Sprintf("error: %s", err)
 	}
 
-	a.tui.ToolDone(tc.Name, truncate(result, 60))
+	// Kiro-style detail line: line counts for reads, diff summary for writes
+	detail := toolDetail(tc.Name, tc.Arguments, result)
+	a.tui.ToolDone(tc.Name, detail)
 	slog.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
 	return result
+}
+
+// toolDetail computes a Kiro-style detail string for a completed tool call.
+func toolDetail(name string, args json.RawMessage, result string) string {
+	var m map[string]any
+	json.Unmarshal(args, &m)
+
+	switch name {
+	case "read_file":
+		lines := strings.Count(result, "\n")
+		if p, ok := m["path"]; ok {
+			return fmt.Sprintf("%v (%d lines)", shortName(fmt.Sprintf("%v", p)), lines)
+		}
+		return fmt.Sprintf("(%d lines)", lines)
+	case "list_directory":
+		entries := strings.Count(strings.TrimSpace(result), "\n") + 1
+		if strings.TrimSpace(result) == "" {
+			entries = 0
+		}
+		return fmt.Sprintf("(%d entries)", entries)
+	case "write_file":
+		lines := 0
+		if c, ok := m["content"]; ok {
+			lines = strings.Count(fmt.Sprintf("%v", c), "\n") + 1
+		}
+		if p, ok := m["path"]; ok {
+			return fmt.Sprintf("%v (%d lines written)", shortName(fmt.Sprintf("%v", p)), lines)
+		}
+		return fmt.Sprintf("(%d lines written)", lines)
+	case "shell_exec":
+		out := strings.TrimSpace(result)
+		if len(out) > 80 {
+			out = out[:80] + "..."
+		}
+		if out == "" {
+			return "(no output)"
+		}
+		return ""
+	case "search_code":
+		matches := strings.Count(strings.TrimSpace(result), "\n") + 1
+		if strings.TrimSpace(result) == "" || result == "no matches found" {
+			return "(no matches)"
+		}
+		return fmt.Sprintf("(%d matches)", matches)
+	}
+	return ""
+}
+
+func shortName(path string) string {
+	parts := strings.Split(path, "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
+	return path
 }
 
 func isDangerous(t tool.Tool, tc provider.ToolCall) bool {
@@ -332,9 +385,13 @@ func systemPrompt() string {
 
 You are direct and concise. You write complete, working code. You explain your reasoning when making decisions.
 
-You have access to tools to interact with the user's system. Use them when you need to inspect or modify the project. Read files before making claims about their contents.
+You have access to tools to interact with the user's system. You MUST use tools to gather any information you need. NEVER ask the user to provide file contents, directory listings, or command output — use the appropriate tool yourself. If the user asks you to check, review, or look at something, use your tools immediately to do so.
+
+Available tools: read_file, write_file, list_directory, shell_exec, search_code.
 
 Rules:
+- ALWAYS use tools instead of asking the user for information you can get yourself.
+- When the user says "check X" or "look at X", use list_directory or read_file on X immediately.
 - Read code before editing it.
 - Show what you changed and why.
 - For destructive operations, explain what will happen.

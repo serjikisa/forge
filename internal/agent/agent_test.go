@@ -400,3 +400,33 @@ func TestJobCancellation(t *testing.T) {
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }
+
+// --- toolDetail ---
+
+func TestToolDetail(t *testing.T) {
+	tests := []struct {
+		name   string
+		tool   string
+		args   string
+		result string
+		want   string
+	}{
+		{"read_file lines", "read_file", `{"path":"main.go"}`, "line1\nline2\nline3\n", "main.go (3 lines)"},
+		{"list_directory entries", "list_directory", `{"path":"."}`, "a/\nb/\nc.go\n", "(3 entries)"},
+		{"list_directory empty", "list_directory", `{"path":"."}`, "", "(0 entries)"},
+		{"write_file", "write_file", `{"path":"out.go","content":"a\nb\nc"}`, "wrote 5 bytes", "out.go (3 lines written)"},
+		{"shell_exec no output", "shell_exec", `{"command":"true"}`, "", "(no output)"},
+		{"shell_exec with output", "shell_exec", `{"command":"ls"}`, "file1\nfile2\n", ""},
+		{"search_code matches", "search_code", `{"pattern":"TODO"}`, "a.go:1: TODO\nb.go:2: TODO\n", "(2 matches)"},
+		{"search_code none", "search_code", `{"pattern":"xyz"}`, "no matches found", "(no matches)"},
+		{"unknown tool", "custom_tool", `{}`, "result", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := toolDetail(tt.tool, json.RawMessage(tt.args), tt.result)
+			if got != tt.want {
+				t.Errorf("toolDetail(%q) = %q, want %q", tt.name, got, tt.want)
+			}
+		})
+	}
+}

@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"syscall"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/config"
@@ -19,10 +18,14 @@ import (
 var version = "dev"
 
 func main() {
+	// In raw terminal mode, Ctrl+C is handled by x/term as byte 0x03.
+	// Ignore SIGINT so it doesn't kill the process.
+	signal.Ignore(os.Interrupt)
+
 	cfg := config.Load()
 	setupLogger(cfg.LogLevel, cfg.LogFormat)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
 
 	cmd := ""

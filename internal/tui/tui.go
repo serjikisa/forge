@@ -2,8 +2,8 @@ package tui
 
 import (
 	"fmt"
-	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/term"
@@ -14,6 +14,15 @@ type stdRW struct{}
 
 func (stdRW) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdRW) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+
+// toolVerbs maps tool names to Kiro-style action verbs.
+var toolVerbs = map[string]string{
+	"read_file":      "Read",
+	"write_file":     "Write",
+	"list_directory":  "Read",
+	"shell_exec":     "Shell",
+	"search_code":    "Search",
+}
 
 type TUI struct {
 	term     *term.Terminal
@@ -46,7 +55,19 @@ func (t *TUI) Restore() {
 }
 
 func (t *TUI) PrintBanner() {
-	fmt.Fprintf(t.term, "  %s %s\n", BoldCyan("⚡ forge"), Dim("• "+t.provider+"/"+t.model))
+	logo := []string{
+		" ⣿⣿⣿⣿⣿⣿⣿⡗  ⣴⣿⣿⣿⣿⣿⣿⣦  ⣿⣿⣿⣿⣿⣿⡟   ⣿⣿⣿⣿⣿⣿⡟  ⣿⣿⣿⣿⣿⣿⣿⡿",
+		" ⣿⣿⠀⠀⠀⠀⠀⠀  ⣿⣿⠀⠀⠀⠀⣿⣿  ⣿⣿⠀⠀⠀⣿⣿  ⣿⣿⠀⠀⠀⠀⠀  ⣿⣿⠀⠀⠀⠀⠀⠀",
+		" ⣿⣿⣿⣿⣿⡗⠀⠀  ⣿⣿⠀⠀⠀⠀⣿⣿  ⣿⣿⣿⣿⣿⡟⠀  ⣿⣿⠀⣿⣿⣿⡗  ⣿⣿⣿⣿⣿⡗⠀⠀",
+		" ⣿⣿⠀⠀⠀⠀⠀⠀  ⣿⣿⠀⠀⠀⠀⣿⣿  ⣿⣿⠀⠀⣿⣿⠀  ⣿⣿⠀⠀⠀⣿⣿  ⣿⣿⠀⠀⠀⠀⠀⠀",
+		" ⣿⣿⠀⠀⠀⠀⠀⠀  ⠻⣿⣿⣿⣿⣿⠟⠀  ⣿⣿⠀⠀⠻⣿⡆ ⠻⣿⣿⣿⣿⡿⠃  ⣿⣿⣿⣿⣿⣿⣿⡿",
+	}
+	fmt.Fprintln(t.term)
+	for _, line := range logo {
+		fmt.Fprintf(t.term, " %s\n", BoldOrange(line))
+	}
+	fmt.Fprintln(t.term)
+	fmt.Fprintf(t.term, "  %s %s\n", BoldOrange("⚡ forge"), Dim("• "+t.provider+"/"+t.model))
 	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+C twice to exit"))
 }
 
@@ -54,16 +75,12 @@ func (t *TUI) ReadInput() (string, bool) {
 	t.term.SetPrompt("  " + Cyan("❯") + " ")
 	line, err := t.term.ReadLine()
 	if err != nil {
-		if err == io.EOF {
-			return "", false
-		}
-		// Ctrl+C sends term.ErrPasteIndicator or returns empty with error
 		t.sigCount++
 		if t.sigCount >= 2 {
-			fmt.Fprintln(t.term)
 			return "", false
 		}
-		fmt.Fprintf(t.term, "  %s\n", Dim("Press Ctrl+C again to exit, or type /exit"))
+		t.term = term.NewTerminal(stdRW{}, "")
+		os.Stdout.WriteString("\r\n  " + Dim("Press Ctrl+C again to exit, or type /exit") + "\r\n")
 		return "", true
 	}
 	t.sigCount = 0
@@ -93,16 +110,41 @@ func (t *TUI) EndStream() {
 	fmt.Fprintln(t.term)
 }
 
+// actionVerb returns the Kiro-style verb for a tool name.
+func actionVerb(toolName string) string {
+	if v, ok := toolVerbs[toolName]; ok {
+		return v
+	}
+	return toolName
+}
+
+// shortPath returns the basename of a path for compact display.
+func shortPath(p string) string {
+	return filepath.Base(p)
+}
+
+// ToolStart prints a Kiro-style "● Action detail" line.
 func (t *TUI) ToolStart(name, detail string) {
-	fmt.Fprintf(t.term, "  %s %s %s\n", Yellow("◐"), Dim(name), Dim(detail))
+	verb := actionVerb(name)
+	fmt.Fprintf(t.term, "%s %s %s\n", Cyan("●"), Bold(verb), detail)
 }
 
+// ToolDone prints a dimmed detail line under the tool annotation.
 func (t *TUI) ToolDone(name, detail string) {
-	fmt.Fprintf(t.term, "  %s %s %s\n", Green("✓"), name, Dim(detail))
+	if detail != "" {
+		fmt.Fprintf(t.term, "  %s\n", Dim(detail))
+	}
 }
 
+// ToolError prints a red bullet error line.
 func (t *TUI) ToolError(name string, err error) {
-	fmt.Fprintf(t.term, "  %s %s %s\n", Red("✗"), name, Red(err.Error()))
+	verb := actionVerb(name)
+	fmt.Fprintf(t.term, "%s %s %s\n", Red("●"), verb, Red(err.Error()))
+}
+
+// Separator prints a Kiro-style horizontal rule.
+func (t *TUI) Separator() {
+	fmt.Fprintf(t.term, "%s\n", Dim(strings.Repeat("─", 80)))
 }
 
 func (t *TUI) Confirm(prompt string) bool {
@@ -116,9 +158,13 @@ func (t *TUI) Confirm(prompt string) bool {
 }
 
 func (t *TUI) Error(msg string) {
-	fmt.Fprintf(t.term, "  %s %s\n", Red("✗"), msg)
+	fmt.Fprintf(t.term, "  %s %s\n", Red("●"), msg)
 }
 
 func (t *TUI) Info(msg string) {
-	fmt.Fprintf(t.term, "  %s %s\n", Cyan("ℹ"), msg)
+	fmt.Fprintf(t.term, "  %s %s\n", Cyan("●"), msg)
+}
+
+func (t *TUI) ResetSigCount() {
+	t.sigCount = 0
 }

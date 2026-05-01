@@ -22,3 +22,7 @@ func Magenta(s string) string { return color("35", s) }
 func Dim(s string) string     { return color("2", s) }
 func Bold(s string) string    { return color("1", s) }
 func BoldCyan(s string) string { return color("1;36", s) }
+
+// Orange uses 256-color mode (color 208).
+func Orange(s string) string { return color("38;5;208", s) }
+func BoldOrange(s string) string { return color("1;38;5;208", s) }

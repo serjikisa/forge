@@ -8,13 +8,13 @@ Works with local LLMs (Ollama) and cloud providers (OpenAI, Anthropic, AWS Bedro
   ⚡ forge • ollama/llama3
   ❯ fix the null pointer in main.go
 
-  ◐ Reading main.go...
-  ✓ read_file main.go (23 lines)
+  ● Read main.go
+    main.go (23 lines)
 
   I found the issue on line 14...
 
-  ◐ Writing fix to main.go...
-  ✓ write_file main.go (patched line 14)
+  ● Write main.go
+    main.go (23 lines written)
 
   Fixed. The nil pointer was caused by...
 ```
