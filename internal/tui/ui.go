@@ -27,4 +27,5 @@ type UI interface {
 	StartSpinner(msg string)
 	StopSpinner()
 	ResetSigCount()
+	ShouldExit() bool
 }

@@ -197,6 +197,9 @@ func (a *Agent) Ask(ctx context.Context, prompt string) {
 func (a *Agent) runLoop(ctx context.Context, interruptCh <-chan string) {
 
 	for {
+		if a.tui.ShouldExit() {
+			return
+		}
 		// Check for interrupt before calling the LLM
 		select {
 		case msg := <-interruptCh:
@@ -526,8 +529,10 @@ func (a *Agent) isConversational() bool {
 	for _, w := range words {
 		for _, kw := range []string{"read", "write", "list", "check", "run", "search", "find", "show",
 			"edit", "fix", "test", "build", "create", "delete", "open", "cat", "grep",
-			"file", "dir", "code", "func", "error", "bug", "implement", ".go", ".js",
-			".py", ".ts", ".md", ".json", ".yaml", ".yml", "internal", "cmd", "src"} {
+			"file", "dir", "code", "func", "error", "bug", "implement",
+			"ls", "pwd", "cd", "git", "make", "go", "curl", "mv", "cp", "rm",
+			".go", ".js", ".py", ".ts", ".md", ".json", ".yaml", ".yml",
+			"internal", "cmd", "src", "~/", "./", "/"} {
 			if strings.Contains(w, kw) {
 				return false
 			}

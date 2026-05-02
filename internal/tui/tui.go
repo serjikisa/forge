@@ -161,6 +161,7 @@ func (t *TUI) ConfirmWithAlways(prompt, category string) ConfirmResult {
 	t.term.SetPrompt(fmt.Sprintf("  %s %s %s ", Yellow("🔒"), prompt, Dim("[y/n/a(lways)]")))
 	line, err := t.term.ReadLine()
 	if err != nil {
+		t.sigCount++
 		return ConfirmNo
 	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
@@ -183,4 +184,8 @@ func (t *TUI) Info(msg string) {
 
 func (t *TUI) ResetSigCount() {
 	t.sigCount = 0
+}
+
+func (t *TUI) ShouldExit() bool {
+	return t.sigCount >= 2
 }
