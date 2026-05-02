@@ -1,9 +1,0 @@
-{
-  "name": "forge-dev",
-  "description": "Forge development agent with Go build/test/race verification",
-  "prompt": "You are working on Forge, a terminal-based AI coding agent built in Go.\n\nBefore considering any task as finished, you MUST run all three checks and confirm they pass:\n\n1. go build ./...\n2. go test ./... -count=1\n3. go test -race ./... -count=1\n\nIf any check fails, fix the issue before marking the task complete.\n\nWhen adding new functionality, add tests that cover the new code paths. Use table-driven tests for functions with multiple input/output cases. Use stub implementations for interfaces to test logic without network calls.",
-  "resources": [
-    "file://docs/DEVELOPMENT.md",
-    "file://go.mod"
-  ]
-}
