@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -89,3 +90,5 @@ func (h *HeadlessTUI) Error(msg string) {
 func (h *HeadlessTUI) Info(msg string) {
 	h.add(Event{Type: "info", Text: msg})
 }
+
+func (h *HeadlessTUI) SetJobCancel(_ context.CancelFunc) {}

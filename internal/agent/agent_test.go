@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1206,4 +1207,137 @@ func TestToolDetail(t *testing.T) {
 			}
 		})
 	}
+}
+
+// --- cancelTrackingTUI tracks SetJobCancel calls ---
+
+type cancelTrackingTUI struct {
+	*scriptedTUI
+	mu          sync.Mutex
+	setCalls    int
+	clearCalls  int
+}
+
+func (c *cancelTrackingTUI) SetJobCancel(fn context.CancelFunc) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if fn != nil {
+		c.setCalls++
+	} else {
+		c.clearCalls++
+	}
+}
+
+func TestRun_SetsAndClearsJobCancel(t *testing.T) {
+	p := &stubProvider{
+		events: []provider.ChatEvent{
+			{Type: provider.EventText, Text: "response"},
+			{Type: provider.EventDone},
+		},
+	}
+	ct := &cancelTrackingTUI{
+		scriptedTUI: &scriptedTUI{HeadlessTUI: tui.NewHeadless(), inputs: []string{"hello", "/exit"}},
+	}
+	a := New(p, nil, ct, "test")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	a.Run(ctx)
+
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	if ct.setCalls != 1 {
+		t.Errorf("SetJobCancel(fn) called %d times, want 1", ct.setCalls)
+	}
+	if ct.clearCalls != 1 {
+		t.Errorf("SetJobCancel(nil) called %d times, want 1", ct.clearCalls)
+	}
+}
+
+// --- TestIsConversational ---
+
+func TestIsConversational(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"hi", true},
+		{"thanks", true},
+		{"hello there", true},
+		{"", false},
+		{"read the file main.go", false},
+		{"fix the bug in internal/agent", false},
+		{"what is the meaning of life and the universe", false},
+		{"ls", false},
+		{"show me the code", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			a := &Agent{
+				history: []provider.Message{
+					{Role: "system", Content: "you are a helper"},
+					{Role: "user", Content: tt.input},
+				},
+			}
+			if got := a.isConversational(); got != tt.want {
+				t.Errorf("isConversational(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// --- TestNoToolsFiltering ---
+
+func TestNoToolsFiltering(t *testing.T) {
+	p := &multiStubProvider{
+		callEvents: [][]provider.ChatEvent{
+			{
+				{Type: provider.EventText, Text: `{"name":"read_file","arguments":{"path":"x.go"}}`},
+				{Type: provider.EventDone},
+			},
+		},
+	}
+	ui := tui.NewHeadless()
+	tools := []tool.Tool{&stubTool{name: "read_file"}}
+	a := New(p, tools, ui, "test")
+	a.noTools = true
+	a.history = append(a.history, provider.Message{Role: "user", Content: "read x.go"})
+
+	a.runLoop(context.Background())
+
+	for _, m := range a.history {
+		if m.Role == "tool" {
+			t.Fatal("expected no tool messages in history when noTools=true")
+		}
+	}
+}
+
+// --- TestChatLog ---
+
+func TestChatLog(t *testing.T) {
+	f, err := os.CreateTemp("", "chatlog-*.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	a := &Agent{}
+	a.SetChatLog(f)
+	a.logChat("USER", "hello")
+
+	data, err := os.ReadFile(f.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "--- USER ---") {
+		t.Errorf("log missing '--- USER ---', got %q", data)
+	}
+	if !strings.Contains(string(data), "hello") {
+		t.Errorf("log missing 'hello', got %q", data)
+	}
+
+	// logChat is no-op when chatLog is nil
+	a2 := &Agent{}
+	a2.logChat("USER", "should not panic")
 }

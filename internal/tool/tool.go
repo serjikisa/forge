@@ -69,3 +69,13 @@ func inProject(path string) bool {
 	// Must not start with ".." (which means it's outside the root)
 	return !strings.HasPrefix(rel, "..")
 }
+
+// expandHome replaces a leading ~ with the user's home directory.
+func expandHome(path string) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if h, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(h, path[1:])
+		}
+	}
+	return path
+}

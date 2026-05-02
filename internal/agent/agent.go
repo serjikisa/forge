@@ -23,6 +23,7 @@ type Agent struct {
 	model    string
 	noTools        bool
 	noToolStrikes  int
+	textToolMode   bool // model emits tool calls as text, not native
 	autoApprove    bool
 	maxConcurrency int
 	perms          *Permissions
@@ -152,7 +153,11 @@ func (a *Agent) Run(ctx context.Context) {
 
 		a.history = append(a.history, provider.Message{Role: "user", Content: input})
 		a.logChat("USER", input)
-		a.runLoop(ctx)
+		a.noToolStrikes = 0
+		jobCtx, jobCancel := context.WithCancel(ctx)
+		a.tui.SetJobCancel(jobCancel)
+		a.runLoop(jobCtx)
+		a.tui.SetJobCancel(nil)
 		a.tui.ResetSigCount()
 	}
 }
@@ -254,12 +259,16 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		}
 		switch ev.Type {
 		case provider.EventText:
-			if !streaming {
-				a.tui.StreamToken("  ")
-				streaming = true
-			}
-			a.tui.StreamToken(ev.Text)
 			text.WriteString(ev.Text)
+			if a.noTools {
+				// No tool parsing — stream immediately
+				if !streaming {
+					a.tui.StreamToken("  ")
+					streaming = true
+				}
+				a.tui.StreamToken(ev.Text)
+			}
+			// When tools are active, buffer text to avoid showing raw JSON
 		case provider.EventToolCall:
 			if ev.ToolCall != nil {
 				toolCalls = append(toolCalls, *ev.ToolCall)
@@ -271,10 +280,6 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		}
 	}
 
-	if streaming {
-		a.tui.StreamToken("\n")
-	}
-
 	// If no native tool calls, check if the model emitted tool calls as text
 	if !a.noTools && len(toolCalls) == 0 && text.Len() > 0 {
 		knownTools := make(map[string]bool, len(a.toolMap))
@@ -282,8 +287,22 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 			knownTools[name] = true
 		}
 		if parsed, remaining := parseTextToolCalls(text.String(), knownTools); len(parsed) > 0 {
+			a.textToolMode = true
+			if remaining != "" {
+				a.tui.StreamToken("  " + remaining + "\n")
+			}
 			return remaining, parsed
 		}
+	}
+
+	// Flush buffered text (when tools were active and text wasn't a tool call)
+	if !a.noTools && text.Len() > 0 {
+		a.tui.StreamToken("  " + text.String())
+		streaming = true
+	}
+
+	if streaming {
+		a.tui.StreamToken("\n")
 	}
 
 	return text.String(), toolCalls
@@ -462,6 +481,13 @@ func (a *Agent) isConversational() bool {
 	}
 	if lastMsg == "" {
 		return false
+	}
+	// If conversation already has tool usage, short messages like "yes" or
+	// "do it" are likely follow-up instructions, not greetings.
+	for _, m := range a.history {
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			return false
+		}
 	}
 	// Short messages with no code/file indicators are likely conversational
 	words := strings.Fields(lastMsg)

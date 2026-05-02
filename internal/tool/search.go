@@ -43,6 +43,7 @@ func (s *SearchCode) Execute(ctx context.Context, params json.RawMessage) (strin
 	if root == "" {
 		root = "."
 	}
+	root = expandHome(root)
 
 	var results strings.Builder
 	count := 0

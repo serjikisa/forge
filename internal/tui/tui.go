@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"golang.org/x/term"
 )
@@ -14,6 +17,54 @@ type stdRW struct{}
 
 func (stdRW) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdRW) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+
+// ctrlCReader wraps a reader and intercepts Ctrl+C (0x03).
+// When a job is running, it cancels the job context and swallows the byte.
+// When idle, it sets a flag and replaces 0x03 with newline so x/term returns
+// an empty line instead of EOF, allowing ReadInput to show the exit hint.
+type ctrlCReader struct {
+	inner  io.ReadWriter
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	ctrlC  bool // set when Ctrl+C pressed while idle
+}
+
+func (r *ctrlCReader) Read(p []byte) (int, error) {
+	n, err := r.inner.Read(p)
+	for i := 0; i < n; i++ {
+		if p[i] == 0x03 {
+			r.mu.Lock()
+			fn := r.cancel
+			r.mu.Unlock()
+			if fn != nil {
+				fn()
+			} else {
+				r.mu.Lock()
+				r.ctrlC = true
+				r.mu.Unlock()
+			}
+			// Replace with \r so x/term returns empty line instead of EOF
+			p[i] = '\r'
+		}
+	}
+	return n, err
+}
+
+func (r *ctrlCReader) Write(p []byte) (int, error) { return r.inner.Write(p) }
+
+func (r *ctrlCReader) setCancel(fn context.CancelFunc) {
+	r.mu.Lock()
+	r.cancel = fn
+	r.mu.Unlock()
+}
+
+func (r *ctrlCReader) consumeCtrlC() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.ctrlC
+	r.ctrlC = false
+	return v
+}
 
 // toolVerbs maps tool names to Kiro-style action verbs.
 var toolVerbs = map[string]string{
@@ -30,6 +81,7 @@ type TUI struct {
 	provider string
 	model    string
 	sigCount int
+	reader   *ctrlCReader
 	spinnerFields
 }
 
@@ -39,13 +91,21 @@ func New(provider, model string) *TUI {
 		oldState = nil
 	}
 
+	r := &ctrlCReader{inner: stdRW{}}
 	t := &TUI{
-		term:     term.NewTerminal(stdRW{}, ""),
+		term:     term.NewTerminal(r, ""),
 		oldState: oldState,
 		provider: provider,
 		model:    model,
+		reader:   r,
 	}
 	return t
+}
+
+// SetJobCancel sets the cancel function for the currently running job.
+// Pass nil when no job is running.
+func (t *TUI) SetJobCancel(fn context.CancelFunc) {
+	t.reader.setCancel(fn)
 }
 
 func (t *TUI) Restore() {
@@ -68,17 +128,23 @@ func (t *TUI) PrintBanner() {
 	}
 	fmt.Fprintln(t.term)
 	fmt.Fprintf(t.term, "  %s %s\n", BoldOrange("⚡ forge"), Dim("• "+t.provider+"/"+t.model))
-	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+C to exit"))
+	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+D or /exit to exit FORGE"))
 }
 
 func (t *TUI) ReadInput() (string, bool) {
 	t.term.SetPrompt("  " + Cyan("❯") + " ")
 	line, err := t.term.ReadLine()
 	if err != nil {
-		// Any error (Ctrl+C or Ctrl+D) → exit
+		// Only Ctrl+D (io.EOF from x/term) reaches here.
+		// Ctrl+C is converted to \r by ctrlCReader, so x/term returns empty line.
 		return "", false
 	}
-	return strings.TrimSpace(line), true
+	line = strings.TrimSpace(line)
+	if line == "" && t.reader.consumeCtrlC() {
+		fmt.Fprintf(t.term, "  %s\n", Dim("Ctrl+D or /exit to exit FORGE"))
+		return "", true
+	}
+	return line, true
 }
 
 func (t *TUI) PrintHelp() {
@@ -91,6 +157,7 @@ func (t *TUI) PrintHelp() {
 	fmt.Fprintln(t.term, Dim("    /model <name> — switch model"))
 	fmt.Fprintln(t.term, Dim("    /exit    — exit forge"))
 	fmt.Fprintln(t.term, Dim("    Ctrl+D   — exit"))
+	fmt.Fprintln(t.term, Dim("    Ctrl+C   — cancel running job"))
 	fmt.Fprintln(t.term)
 }
 

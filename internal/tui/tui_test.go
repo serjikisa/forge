@@ -141,3 +141,84 @@ func TestShortPath(t *testing.T) {
 		}
 	}
 }
+
+// mockRW is a mock io.ReadWriter for testing ctrlCReader.
+type mockRW struct {
+	data []byte
+}
+
+func (m *mockRW) Read(p []byte) (int, error) {
+	n := copy(p, m.data)
+	m.data = m.data[n:]
+	return n, nil
+}
+
+func (m *mockRW) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestCtrlCReader_CancelsJobOnCtrlC(t *testing.T) {
+	cancelled := false
+	r := &ctrlCReader{inner: &mockRW{data: []byte{0x03}}}
+	r.setCancel(func() { cancelled = true })
+
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cancelled {
+		t.Error("expected cancel to be called")
+	}
+	// Byte replaced with \r, not swallowed
+	if n != 1 || buf[0] != '\r' {
+		t.Errorf("expected 1 byte '\\r', got n=%d buf[0]=%x", n, buf[0])
+	}
+}
+
+func TestCtrlCReader_SetsCtrlCFlagWhenIdle(t *testing.T) {
+	r := &ctrlCReader{inner: &mockRW{data: []byte{0x03}}}
+
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 1 || buf[0] != '\r' {
+		t.Errorf("expected 1 byte '\\r', got n=%d buf[0]=%x", n, buf[0])
+	}
+	if !r.consumeCtrlC() {
+		t.Error("expected ctrlC flag to be set")
+	}
+	if r.consumeCtrlC() {
+		t.Error("expected ctrlC flag to be consumed (false on second call)")
+	}
+}
+
+func TestCtrlCReader_NormalBytesUnaffected(t *testing.T) {
+	r := &ctrlCReader{inner: &mockRW{data: []byte{'h', 'i'}}}
+	r.setCancel(func() { t.Error("cancel should not be called for normal bytes") })
+
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected n=2, got %d", n)
+	}
+}
+
+func TestCtrlCReader_SetCancelNil(t *testing.T) {
+	cancelled := false
+	r := &ctrlCReader{inner: &mockRW{data: []byte{0x03}}}
+	r.setCancel(func() { cancelled = true })
+	r.setCancel(nil)
+
+	buf := make([]byte, 4)
+	r.Read(buf)
+	if cancelled {
+		t.Error("cancel should not be called after clearing")
+	}
+	if !r.consumeCtrlC() {
+		t.Error("expected ctrlC flag set when idle (cancel nil)")
+	}
+}

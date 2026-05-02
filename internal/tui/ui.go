@@ -1,5 +1,7 @@
 package tui
 
+import "context"
+
 // ConfirmResult represents the three-way response from a permission prompt.
 type ConfirmResult int
 
@@ -27,4 +29,5 @@ type UI interface {
 	StartSpinner(msg string)
 	StopSpinner()
 	ResetSigCount()
+	SetJobCancel(fn context.CancelFunc)
 }
