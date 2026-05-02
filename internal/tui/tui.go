@@ -68,22 +68,16 @@ func (t *TUI) PrintBanner() {
 	}
 	fmt.Fprintln(t.term)
 	fmt.Fprintf(t.term, "  %s %s\n", BoldOrange("⚡ forge"), Dim("• "+t.provider+"/"+t.model))
-	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+C twice to exit"))
+	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+C to exit"))
 }
 
 func (t *TUI) ReadInput() (string, bool) {
 	t.term.SetPrompt("  " + Cyan("❯") + " ")
 	line, err := t.term.ReadLine()
 	if err != nil {
-		t.sigCount++
-		if t.sigCount >= 2 {
-			return "", false
-		}
-		t.term = term.NewTerminal(stdRW{}, "")
-		os.Stdout.WriteString("\r\n  " + Dim("Press Ctrl+C again to exit, or type /exit") + "\r\n")
-		return "", true
+		// Any error (Ctrl+C or Ctrl+D) → exit
+		return "", false
 	}
-	t.sigCount = 0
 	return strings.TrimSpace(line), true
 }
 
@@ -96,7 +90,6 @@ func (t *TUI) PrintHelp() {
 	fmt.Fprintln(t.term, Dim("    /model ls — list available models"))
 	fmt.Fprintln(t.term, Dim("    /model <name> — switch model"))
 	fmt.Fprintln(t.term, Dim("    /exit    — exit forge"))
-	fmt.Fprintln(t.term, Dim("    Ctrl+C   — press twice to exit"))
 	fmt.Fprintln(t.term, Dim("    Ctrl+D   — exit"))
 	fmt.Fprintln(t.term)
 }
@@ -184,8 +177,4 @@ func (t *TUI) Info(msg string) {
 
 func (t *TUI) ResetSigCount() {
 	t.sigCount = 0
-}
-
-func (t *TUI) ShouldExit() bool {
-	return t.sigCount >= 2
 }

@@ -20,6 +20,11 @@ import (
 var version = "dev"
 
 func main() {
+	// Must be first: in raw terminal mode, Ctrl+C sends byte 0x03 to stdin.
+	// Ignore SIGINT so the OS doesn't kill the process before x/term handles it.
+	// Serve mode re-enables it later for graceful shutdown.
+	signal.Ignore(os.Interrupt)
+
 	cfg := config.Load()
 	setupLogger(cfg.LogLevel, cfg.LogFormat)
 
@@ -33,12 +38,8 @@ func main() {
 
 	switch cmd {
 	case "chat":
-		// In raw terminal mode, Ctrl+C is handled by x/term as byte 0x03.
-		// Ignore SIGINT so it doesn't kill the process.
-		signal.Ignore(os.Interrupt)
 		runChat(ctx, cfg)
 	case "ask":
-		signal.Ignore(os.Interrupt)
 		runAsk(ctx, cfg)
 	case "serve":
 		runServe(ctx, cfg)
@@ -47,7 +48,6 @@ func main() {
 	case "version":
 		fmt.Println("forge", version)
 	default:
-		signal.Ignore(os.Interrupt)
 		runChat(ctx, cfg)
 	}
 }

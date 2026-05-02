@@ -544,7 +544,7 @@ func TestRunLoop_ToolCallsThenText(t *testing.T) {
 	a.autoApprove = true
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "read it"})
-	a.runLoop(context.Background(), nil)
+	a.runLoop(context.Background())
 
 	if p.callCount != 2 {
 		t.Errorf("callCount = %d, want 2", p.callCount)
@@ -730,7 +730,7 @@ func TestRunLoop_ContextCancelled(t *testing.T) {
 	cancel()
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "test"})
-	a.runLoop(ctx, nil)
+	a.runLoop(ctx)
 
 	// Should return quickly without calling provider (context already cancelled)
 	// The provider returns an error on cancelled context, runLoop detects ctx.Err()
@@ -764,7 +764,7 @@ func TestRunLoop_NoToolsFallback(t *testing.T) {
 	a.provider = failOnce
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "test"})
-	a.runLoop(context.Background(), nil)
+	a.runLoop(context.Background())
 	_ = callNum
 
 	if !a.noTools {
@@ -809,7 +809,7 @@ func TestRunLoop_NoToolStrikes(t *testing.T) {
 	a.noToolStrikes = 1 // already had one strike
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "test"})
-	a.runLoop(context.Background(), nil)
+	a.runLoop(context.Background())
 
 	if !a.noTools {
 		t.Error("expected noTools after 2 strikes")
@@ -916,7 +916,7 @@ func TestRunLoop_ProviderError(t *testing.T) {
 	a := New(p, nil, ui, "test")
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "test"})
-	a.runLoop(context.Background(), nil)
+	a.runLoop(context.Background())
 
 	evts := ui.Events()
 	found := false
@@ -927,79 +927,6 @@ func TestRunLoop_ProviderError(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected error event for rate limit")
-	}
-}
-
-// --- runLoop with interrupt before LLM call ---
-
-func TestRunLoop_InterruptBeforeLLM(t *testing.T) {
-	p := &multiStubProvider{
-		callEvents: [][]provider.ChatEvent{
-			// First call responds to redirected message
-			{{Type: provider.EventText, Text: "redirected"}, {Type: provider.EventDone}},
-			// Second call responds to original
-			{{Type: provider.EventText, Text: "done"}, {Type: provider.EventDone}},
-		},
-	}
-	ui := tui.NewHeadless()
-	a := New(p, nil, ui, "test")
-
-	interruptCh := make(chan string, 1)
-	interruptCh <- "new question"
-
-	a.history = append(a.history, provider.Message{Role: "user", Content: "old"})
-	a.runLoop(context.Background(), interruptCh)
-
-	// Should have processed the interrupt
-	hasRedirect := false
-	for _, m := range a.history {
-		if m.Role == "user" && m.Content == "new question" {
-			hasRedirect = true
-		}
-	}
-	if !hasRedirect {
-		t.Error("expected redirected user message in history")
-	}
-}
-
-// --- runLoop with interrupt after tool execution ---
-
-func TestRunLoop_InterruptAfterToolExec(t *testing.T) {
-	p := &multiStubProvider{
-		callEvents: [][]provider.ChatEvent{
-			// First: tool call
-			{{Type: provider.EventToolCall, ToolCall: &provider.ToolCall{
-				ID: "c1", Name: "read_file", Arguments: json.RawMessage(`{}`),
-			}}, {Type: provider.EventDone}},
-			// Second: respond to redirected message
-			{{Type: provider.EventText, Text: "redirected"}, {Type: provider.EventDone}},
-			// Third: final
-			{{Type: provider.EventText, Text: "final"}, {Type: provider.EventDone}},
-		},
-	}
-	ui := tui.NewHeadless()
-	tools := []tool.Tool{&stubTool{name: "read_file"}}
-	a := New(p, tools, ui, "test")
-	a.autoApprove = true
-
-	// This message will be picked up after tool execution
-	interruptCh := make(chan string, 1)
-
-	// We need the interrupt to arrive after the first tool execution.
-	// Since tool execution is synchronous in test, we pre-buffer it.
-	interruptCh <- "interrupt after tools"
-
-	a.history = append(a.history, provider.Message{Role: "user", Content: "start"})
-	a.runLoop(context.Background(), interruptCh)
-
-	hasInterrupt := false
-	for _, m := range a.history {
-		if m.Role == "user" && m.Content == "interrupt after tools" {
-			hasInterrupt = true
-		}
-	}
-	if !hasInterrupt {
-		t.Error("expected interrupt message in history")
 	}
 }
 
@@ -1026,7 +953,7 @@ func TestRunLoop_ContextCancelledDuringStream(t *testing.T) {
 	}
 
 	a.history = append(a.history, provider.Message{Role: "user", Content: "test"})
-	a.runLoop(ctx, nil)
+	a.runLoop(ctx)
 
 	evts := ui.Events()
 	hasCancel := false

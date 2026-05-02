@@ -51,7 +51,6 @@ func (h *HeadlessTUI) PrintBanner()              {}
 func (h *HeadlessTUI) ReadInput() (string, bool)  { return "", false }
 func (h *HeadlessTUI) PrintHelp()                 {}
 func (h *HeadlessTUI) ResetSigCount()             {}
-func (h *HeadlessTUI) ShouldExit() bool            { return false }
 func (h *HeadlessTUI) StartSpinner(_ string)      {}
 func (h *HeadlessTUI) StopSpinner()               {}
 
