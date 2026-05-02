@@ -44,6 +44,11 @@ func (s *ShellExec) Execute(ctx context.Context, params json.RawMessage) (string
 		return "", err
 	}
 
+	// Block shell commands that read/write files outside the project boundary
+	if path := extractTargetPath(p.Command); path != "" && !inProject(path) {
+		return "", fmt.Errorf("command targets path %q which is outside project directory", path)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
@@ -78,4 +83,33 @@ func (s *ShellExec) Execute(ctx context.Context, params json.RawMessage) (string
 	}
 
 	return result.String(), nil
+}
+
+// extractTargetPath detects if a shell command reads/writes a specific file path.
+// Returns the path if found, empty string otherwise.
+func extractTargetPath(cmd string) string {
+	// Commands that read/write files by path as their last argument
+	fileCommands := []string{"cat ", "head ", "tail ", "less ", "more ", "tee ", "cp ", "mv ", "nano ", "vi ", "vim "}
+	lower := strings.ToLower(strings.TrimSpace(cmd))
+	for _, prefix := range fileCommands {
+		if strings.HasPrefix(lower, prefix) {
+			// Extract the last argument as the target path
+			parts := strings.Fields(cmd)
+			if len(parts) >= 2 {
+				target := parts[len(parts)-1]
+				// Only check absolute paths (relative paths are within project)
+				if strings.HasPrefix(target, "/") {
+					return target
+				}
+			}
+		}
+	}
+	// Also check for redirection to absolute paths
+	for _, op := range []string{"> /", ">> /"} {
+		if idx := strings.Index(cmd, op); idx >= 0 {
+			path := strings.Fields(cmd[idx+len(op)-1:])[0]
+			return path
+		}
+	}
+	return ""
 }

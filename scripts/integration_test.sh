@@ -2,12 +2,34 @@
 set -euo pipefail
 
 # Integration tests for Forge server API
-# Usage: ./scripts/integration_test.sh [model1 model2 ...]
-# If no models specified, tests run against the server's default model.
+# Usage: ./scripts/integration_test.sh [-o output.txt] [--skip pattern] [model1 model2 ...]
+# If no models specified, auto-discovers from Ollama.
+
+OUTPUT_FILE=""
+SKIP_PATTERN=""
+MODELS_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output) OUTPUT_FILE="$2"; shift 2 ;;
+        --skip) SKIP_PATTERN="$2"; shift 2 ;;
+        *) MODELS_ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${MODELS_ARGS[@]+"${MODELS_ARGS[@]}"}"
+
+# If output file specified, tee all output (strip ANSI codes in file, flush each line)
+if [ -n "$OUTPUT_FILE" ]; then
+    mkdir -p "$(dirname "$OUTPUT_FILE")"
+    : > "$OUTPUT_FILE"
+    exec > >(while IFS= read -r line; do
+        printf '%s\n' "$line"
+        printf '%s\n' "$line" | sed 's/\x1b\[[0-9;]*m//g' >> "$OUTPUT_FILE"
+    done) 2>&1
+fi
 
 PORT="${FORGE_PORT:-8080}"
 BASE="http://localhost:${PORT}"
-TIMEOUT=120
+TIMEOUT="${FORGE_TIMEOUT:-180}"
 PASS=0
 FAIL=0
 SKIP=0
@@ -250,7 +272,9 @@ main() {
     if [ ${#models[@]} -eq 0 ]; then
         # Auto-discover models from Ollama
         log "No models specified, discovering from Ollama..."
-        mapfile -t models < <(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "
+        while IFS= read -r m; do
+            models+=("$m")
+        done < <(curl -s http://localhost:11434/api/tags 2>/dev/null | python3 -c "
 import sys,json
 try:
     tags=json.load(sys.stdin)
@@ -264,11 +288,19 @@ except: pass
         else
             log "Found ${#models[@]} model(s): ${models[*]}"
             for model in "${models[@]}"; do
+                if [ -n "$SKIP_PATTERN" ] && [[ "$model" == *"$SKIP_PATTERN"* ]]; then
+                    skip "[$model] skipped (matches --skip '$SKIP_PATTERN')"
+                    continue
+                fi
                 run_model_tests "$model" "$model"
             done
         fi
     else
         for model in "${models[@]}"; do
+            if [ -n "$SKIP_PATTERN" ] && [[ "$model" == *"$SKIP_PATTERN"* ]]; then
+                skip "[$model] skipped (matches --skip '$SKIP_PATTERN')"
+                continue
+            fi
             run_model_tests "$model" "$model"
         done
     fi

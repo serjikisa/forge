@@ -63,6 +63,14 @@ func (w *WriteFile) Execute(_ context.Context, params json.RawMessage) (string, 
 	if !inProject(p.Path) {
 		return "", fmt.Errorf("path %q is outside project directory", p.Path)
 	}
+	// Prevent creating go.mod/go.sum in subdirectories (breaks module resolution)
+	base := filepath.Base(p.Path)
+	if base == "go.mod" || base == "go.sum" {
+		abs, _ := filepath.Abs(p.Path)
+		if filepath.Dir(abs) != ProjectDir() {
+			return "", fmt.Errorf("cannot create %s in subdirectory — would break module resolution", base)
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(p.Path), 0o755); err != nil {
 		return "", err
 	}

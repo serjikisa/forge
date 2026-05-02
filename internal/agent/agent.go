@@ -21,8 +21,9 @@ type Agent struct {
 	tui      tui.UI
 	history  []provider.Message
 	model    string
-	noTools     bool
-	autoApprove bool
+	noTools       bool
+	noToolStrikes int
+	autoApprove   bool
 }
 
 func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
@@ -169,9 +170,20 @@ func (a *Agent) runLoop(ctx context.Context) {
 		}
 
 		if len(toolCalls) == 0 {
+			// Track models that ignore tools — if they respond with text
+			// but never call tools, disable tools to avoid wasting tokens.
+			if !a.noTools && text != "" {
+				a.noToolStrikes++
+				if a.noToolStrikes >= 2 {
+					a.noTools = true
+					a.tui.Info(fmt.Sprintf("model %s does not appear to use tools — disabling tool calls", a.model))
+					slog.Info("auto-disabled tools: model not using them")
+				}
+			}
 			a.tui.EndStream()
 			return
 		}
+		a.noToolStrikes = 0 // reset on successful tool use
 
 		// Add assistant message with tool calls
 		a.history = append(a.history, provider.Message{
@@ -388,20 +400,34 @@ func systemPrompt() string {
 
 You are direct and concise. You write complete, working code. You explain your reasoning when making decisions.
 
-You have access to tools to interact with the user's system. You MUST use tools to gather any information you need. NEVER ask the user to provide file contents, directory listings, or command output — use the appropriate tool yourself. If the user asks you to check, review, or look at something, use your tools immediately to do so.
+You have access to tools to interact with the user's system. You MUST use tools to gather any information you need. NEVER ask the user to provide file contents, directory listings, or command output — use the appropriate tool yourself.
 
-Available tools: read_file, write_file, list_directory, shell_exec, search_code.
+Tool selection guide:
+- read_file: Use when asked to read, show, check, or review a specific file. Use for "read X", "show me X", "check X.go".
+- write_file: Use to create or overwrite files.
+- list_directory: Use when asked to list, check, or explore a directory. Use for "list X/", "check internal/", "what's in X".
+- shell_exec: Use ONLY for running commands (build, test, git, etc). Do NOT use shell_exec to read files — use read_file instead.
+- search_code: Use to find patterns across files. Use for "search for X", "find X", "where is X defined".
+
+CRITICAL: When you need to use a tool, output ONLY the JSON tool call. Do NOT describe what you plan to do — just call the tool directly.
+
+Tool call format:
+{"name": "<tool_name>", "arguments": {<args>}}
+
+Examples:
+- To list files: {"name": "list_directory", "arguments": {"path": "."}}
+- To read a file: {"name": "read_file", "arguments": {"path": "internal/agent/agent.go"}}
+- To run a command: {"name": "shell_exec", "arguments": {"command": "go test ./... -count=1"}}
+- To search code: {"name": "search_code", "arguments": {"pattern": "func main", "include": "*.go"}}
 
 Rules:
-- ALWAYS use tools instead of asking the user for information you can get yourself.
-- When the user says "check X" or "look at X", use list_directory or read_file on X immediately.
+- ALWAYS use tools instead of asking the user for information.
+- NEVER explain what tool you will use. Just call it.
+- Use read_file to read files, NOT shell_exec with cat/head/tail.
 - Read code before editing it.
-- Show what you changed and why.
-- For destructive operations, explain what will happen.
 - Keep responses concise.
-- If a task requires multiple steps, outline your plan first.
+- If a task requires multiple steps, call the first tool immediately.
 - Do not fabricate file contents or command outputs.
-- Before considering any task done, run: go build ./... && go test ./... -count=1 && go test -race ./... -count=1
 
 Current directory: %s
 Operating system: %s/%s`, dir, runtime.GOOS, runtime.GOARCH)

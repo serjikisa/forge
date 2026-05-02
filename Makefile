@@ -2,6 +2,7 @@
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 PORT := "8080"
+SKIP ?= deepseek
 
 build:
 	go build -ldflags "-X main.version=$(VERSION)" -o bin/forge ./cmd/forge
@@ -24,7 +25,9 @@ install: build
 
 integration-test:
 	@echo "Running integration tests (server must be running on port $(PORT))..."
-	FORGE_PORT=$(PORT) ./scripts/integration_test.sh $(MODELS)
+	$(eval OUTPUT ?= out/integration-tests-$(shell date +%Y%m%d-%H%M%S).txt)
+	FORGE_PORT=$(PORT) ./scripts/integration_test.sh -o $(OUTPUT) $(if $(SKIP),--skip $(SKIP)) $(MODELS)
+	@echo "Results saved to $(OUTPUT)"
 
 kill-port:
 	@echo "Killing process on port $(PORT)..."

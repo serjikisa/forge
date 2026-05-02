@@ -43,8 +43,14 @@ curl -fsSL https://forge-cli.dev/install.sh | sh
 # Start chatting with your default model
 forge chat
 
+# Auto-approve all tool calls (no confirmation prompts)
+forge chat --yes
+
 # Ask a one-off question
 forge ask "explain this error" --file main.go
+
+# Start the REST API server
+forge serve --port 8080
 
 # Use a specific provider
 forge chat --provider openai --model gpt-4o
@@ -59,9 +65,11 @@ On first run, Forge will prompt you to select a provider and model.
 
 - **Concurrent tool execution** — multiple file reads, searches, and commands run in parallel
 - **Streaming responses** — tokens appear instantly as the model generates them
-- **Rich terminal UI** — colored output, animated spinners, syntax highlighting, markdown rendering
+- **Rich terminal UI** — Kiro-style output with colored bullets, action verbs, and detail lines
+- **REST API server** — `forge serve` exposes a JSON API for external tool integration
 - **Multi-provider** — switch between local and cloud models with a flag
-- **Safe by default** — destructive operations require confirmation, file writes show diffs
+- **Safe by default** — destructive operations require confirmation, project boundary enforcement
+- **Auto-approve mode** — `--yes` flag skips all confirmation prompts
 - **Zero dependencies** — single static binary, built entirely with Go's standard library
 
 ## Providers
@@ -100,10 +108,10 @@ See [docs/config.md](docs/config.md) for the full reference.
 | Command | Description |
 |---------|-------------|
 | `forge chat` | Interactive chat session (default) |
+| `forge chat --yes` | Chat with auto-approved tool calls |
 | `forge ask "<prompt>"` | Single-shot query |
+| `forge serve --port 8080` | Start REST API server |
 | `forge models` | List available models |
-| `forge config` | Manage settings |
-| `forge update` | Self-update to latest version |
 | `forge version` | Print version |
 
 ## Build from Source
@@ -126,6 +134,7 @@ Requires Go 1.22+.
 - [Configuration](docs/config.md)
 - [Contributing](docs/contributing.md)
 - [Specs](docs/specs.md)
+- [Backlog](docs/backlog.md)
 
 ## License
 
