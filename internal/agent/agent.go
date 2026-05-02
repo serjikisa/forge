@@ -21,9 +21,11 @@ type Agent struct {
 	tui      tui.UI
 	history  []provider.Message
 	model    string
-	noTools       bool
-	noToolStrikes int
-	autoApprove   bool
+	noTools        bool
+	noToolStrikes  int
+	autoApprove    bool
+	maxConcurrency int
+	perms          *Permissions
 }
 
 func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
@@ -32,12 +34,14 @@ func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent
 		tm[t.Name()] = t
 	}
 	return &Agent{
-		provider: p,
-		tools:    tools,
-		toolMap:  tm,
-		tui:      ui,
-		history:  []provider.Message{{Role: "system", Content: systemPrompt()}},
-		model:    model,
+		provider:       p,
+		tools:          tools,
+		toolMap:        tm,
+		tui:            ui,
+		history:        []provider.Message{{Role: "system", Content: systemPrompt()}},
+		model:          model,
+		maxConcurrency: 5,
+		perms:          NewPermissions(),
 	}
 }
 
@@ -47,92 +51,120 @@ func (a *Agent) Run(ctx context.Context) {
 	a.tui.PrintBanner()
 	a.tui.StreamToken("\n")
 
+	// Background input reader for interrupt support
+	inputCh := make(chan string, 1)
+	exitCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+
+	go func() {
+		for {
+			input, ok := a.tui.ReadInput()
+			if !ok {
+				close(exitCh)
+				return
+			}
+			select {
+			case inputCh <- input:
+			case <-doneCh:
+				return
+			}
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-		}
-
-		input, ok := a.tui.ReadInput()
-		if !ok {
+		case <-exitCh:
 			return
-		}
-		if input == "" {
-			continue
-		}
+		case input := <-inputCh:
+			if input == "" {
+				continue
+			}
 
-		// Slash commands
-		switch {
-		case input == "/exit" || input == "/quit":
-			return
-		case input == "/help" || input == "/":
-			a.tui.PrintHelp()
-			continue
-		case input == "/clear":
-			a.history = a.history[:1] // keep system prompt
-			a.tui.Info("conversation cleared")
-			continue
-		case input == "/model":
-			a.tui.Info(fmt.Sprintf("provider: %s, model: %s", a.provider.Name(), a.model))
-			continue
-		case strings.HasPrefix(input, "/model "):
-			name := strings.TrimSpace(strings.TrimPrefix(input, "/model "))
-			if name == "ls" || name == "list" {
-				models, err := a.provider.ListModels(ctx)
-				if err != nil {
-					a.tui.Error(err.Error())
-				} else {
-					for _, m := range models {
-						if m.Name == a.model {
-							a.tui.Info(fmt.Sprintf("  %s (active)", m.Name))
-						} else {
-							a.tui.Info(fmt.Sprintf("  %s", m.Name))
+			// Slash commands
+			switch {
+			case input == "/exit" || input == "/quit":
+				return
+			case input == "/help" || input == "/":
+				a.tui.PrintHelp()
+				continue
+			case input == "/clear":
+				a.history = a.history[:1]
+				a.tui.Info("conversation cleared")
+				continue
+			case input == "/model":
+				a.tui.Info(fmt.Sprintf("provider: %s, model: %s", a.provider.Name(), a.model))
+				continue
+			case strings.HasPrefix(input, "/model "):
+				name := strings.TrimSpace(strings.TrimPrefix(input, "/model "))
+				if name == "ls" || name == "list" {
+					models, err := a.provider.ListModels(ctx)
+					if err != nil {
+						a.tui.Error(err.Error())
+					} else {
+						for _, m := range models {
+							if m.Name == a.model {
+								a.tui.Info(fmt.Sprintf("  %s (active)", m.Name))
+							} else {
+								a.tui.Info(fmt.Sprintf("  %s", m.Name))
+							}
 						}
 					}
+					continue
+				}
+				if sw, ok := a.provider.(provider.ModelSwitcher); ok {
+					models, err := a.provider.ListModels(ctx)
+					if err == nil {
+						found := false
+						for _, m := range models {
+							if m.Name == name || m.ID == name {
+								found = true
+								break
+							}
+						}
+						if !found {
+							a.tui.Error(fmt.Sprintf("model %q not found. Use /model ls to list available models", name))
+							continue
+						}
+					}
+					sw.SetModel(name)
+					a.model = name
+					a.noTools = false
+					a.tui.Info(fmt.Sprintf("switched to %s", name))
+				} else {
+					a.tui.Error("provider does not support model switching")
 				}
 				continue
 			}
-			if sw, ok := a.provider.(provider.ModelSwitcher); ok {
-				// Validate model exists
-				models, err := a.provider.ListModels(ctx)
-				if err == nil {
-					found := false
-					for _, m := range models {
-						if m.Name == name || m.ID == name {
-							found = true
-							break
-						}
-					}
-					if !found {
-						a.tui.Error(fmt.Sprintf("model %q not found. Use /model ls to list available models", name))
-						continue
-					}
-				}
-				sw.SetModel(name)
-				a.model = name
-				a.noTools = false
-				a.tui.Info(fmt.Sprintf("switched to %s", name))
-			} else {
-				a.tui.Error("provider does not support model switching")
-			}
-			continue
-		}
 
-		a.history = append(a.history, provider.Message{Role: "user", Content: input})
-		a.runLoop(ctx)
-		a.tui.ResetSigCount()
+			a.history = append(a.history, provider.Message{Role: "user", Content: input})
+			a.runLoop(ctx, inputCh)
+			a.tui.ResetSigCount()
+		}
 	}
 }
 
 func (a *Agent) Ask(ctx context.Context, prompt string) {
 	a.history = append(a.history, provider.Message{Role: "user", Content: prompt})
-	a.runLoop(ctx)
+	a.runLoop(ctx, nil)
 }
 
-func (a *Agent) runLoop(ctx context.Context) {
+func (a *Agent) runLoop(ctx context.Context, interruptCh <-chan string) {
 
 	for {
+		// Check for interrupt before calling the LLM
+		select {
+		case msg := <-interruptCh:
+			if msg != "" {
+				a.tui.Info("interrupted — redirecting...")
+				a.history = append(a.history, provider.Message{Role: "user", Content: msg})
+				continue // restart loop with new message
+			}
+		default:
+		}
+
 		a.tui.StartSpinner("thinking...")
 		tools := a.toolDefs()
 		if a.noTools {
@@ -191,14 +223,19 @@ func (a *Agent) runLoop(ctx context.Context) {
 			ToolCalls: toolCalls,
 		})
 
-		// Execute tools and add results
-		for _, tc := range toolCalls {
-			result := a.executeTool(ctx, tc)
-			a.history = append(a.history, provider.Message{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
-			})
+		// Execute tools concurrently and add results
+		results := a.executeToolsConcurrently(ctx, toolCalls)
+		a.history = append(a.history, results...)
+
+		// Check for interrupt after tool execution
+		select {
+		case msg := <-interruptCh:
+			if msg != "" {
+				a.tui.Info("interrupted — redirecting...")
+				a.history = append(a.history, provider.Message{Role: "user", Content: msg})
+				continue
+			}
+		default:
 		}
 		// Loop back to get the next response
 	}
@@ -260,17 +297,32 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 		return msg
 	}
 
-	// Check safety
+	// Check permissions
 	if !a.autoApprove && t.Safety() >= tool.NeedsConfirmation {
-		detail := string(tc.Arguments)
-		if isDangerous(t, tc) {
-			detail = tui.Red(detail)
-		}
-		prompt := fmt.Sprintf("%s wants to run: %s", tc.Name, detail)
-		if !a.tui.Confirm(prompt) {
-			msg := "denied by user"
+		perm := a.perms.Check(tc.Name)
+		if perm == PermDeny {
+			msg := "denied by policy"
 			a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
 			return msg
+		}
+		if perm == PermAsk {
+			detail := string(tc.Arguments)
+			if isDangerous(t, tc) {
+				detail = tui.Red(detail)
+			}
+			cat := CategoryName(tc.Name)
+			prompt := fmt.Sprintf("%s wants to run: %s", tc.Name, detail)
+			switch a.tui.ConfirmWithAlways(prompt, cat) {
+			case tui.ConfirmAlways:
+				a.perms.AllowCategory(tc.Name)
+				a.tui.Info(fmt.Sprintf("auto-approving all %s operations for this session", cat))
+			case tui.ConfirmYes:
+				// proceed
+			default:
+				msg := "denied by user"
+				a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
+				return msg
+			}
 		}
 	}
 

@@ -157,6 +157,22 @@ func (t *TUI) Confirm(prompt string) bool {
 	return ans == "y" || ans == "yes"
 }
 
+func (t *TUI) ConfirmWithAlways(prompt, category string) ConfirmResult {
+	t.term.SetPrompt(fmt.Sprintf("  %s %s %s ", Yellow("🔒"), prompt, Dim("[y/n/a(lways)]")))
+	line, err := t.term.ReadLine()
+	if err != nil {
+		return ConfirmNo
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return ConfirmYes
+	case "a", "always":
+		return ConfirmAlways
+	default:
+		return ConfirmNo
+	}
+}
+
 func (t *TUI) Error(msg string) {
 	fmt.Fprintf(t.term, "  %s %s\n", Red("●"), msg)
 }

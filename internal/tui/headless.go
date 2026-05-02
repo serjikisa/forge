@@ -80,6 +80,8 @@ func (h *HeadlessTUI) ToolError(name string, err error) {
 
 func (h *HeadlessTUI) Confirm(_ string) bool { return true }
 
+func (h *HeadlessTUI) ConfirmWithAlways(_, _ string) ConfirmResult { return ConfirmYes }
+
 func (h *HeadlessTUI) Error(msg string) {
 	h.add(Event{Type: "error", Error: msg})
 }
