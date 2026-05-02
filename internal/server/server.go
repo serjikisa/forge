@@ -30,6 +30,7 @@ type Server struct {
 
 func New(p provider.Provider, model string) *Server {
 	s := &Server{provider: p, model: model, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /", s.handleDiscovery)
 	s.mux.HandleFunc("POST /v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	return s
@@ -38,6 +39,19 @@ func New(p provider.Provider, model string) *Server {
 func (s *Server) ListenAndServe(addr string) error {
 	slog.Info("forge server listening", "addr", addr)
 	return http.ListenAndServe(addr, s.mux)
+}
+
+func (s *Server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"name":  "forge",
+		"model": s.model,
+		"endpoints": []map[string]string{
+			{"method": "GET", "path": "/", "description": "API discovery"},
+			{"method": "GET", "path": "/health", "description": "Health check"},
+			{"method": "POST", "path": "/v1/chat", "description": "Send a chat message. Body: {\"message\": \"...\", \"model\": \"...(optional)\"}"},
+		},
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
