@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/config"
@@ -64,6 +65,19 @@ func runChat(ctx context.Context, cfg *config.Config) {
 	a := agent.New(p, tools, ui, model)
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
+	}
+	if logPath := flagValue("--log"); logPath != "" {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "error creating log dir: %v\n", err)
+			os.Exit(1)
+		}
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error opening log: %v\n", err)
+			os.Exit(1)
+		}
+		defer f.Close()
+		a.SetChatLog(f)
 	}
 	a.Run(ctx)
 }
@@ -236,4 +250,13 @@ func hasFlag(flags ...string) bool {
 		}
 	}
 	return false
+}
+
+func flagValue(name string) string {
+	for i, arg := range os.Args[1:] {
+		if arg == name && i+2 < len(os.Args) {
+			return os.Args[i+2]
+		}
+	}
+	return ""
 }

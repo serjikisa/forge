@@ -26,6 +26,7 @@ type Agent struct {
 	autoApprove    bool
 	maxConcurrency int
 	perms          *Permissions
+	chatLog        *os.File
 }
 
 func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
@@ -33,19 +34,46 @@ func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent
 	for _, t := range tools {
 		tm[t.Name()] = t
 	}
+	small := isSmallModel(p)
 	return &Agent{
 		provider:       p,
 		tools:          tools,
 		toolMap:        tm,
 		tui:            ui,
-		history:        []provider.Message{{Role: "system", Content: systemPrompt()}},
+		history:        []provider.Message{{Role: "system", Content: systemPrompt(small)}},
 		model:          model,
 		maxConcurrency: 5,
 		perms:          NewPermissions(),
 	}
 }
 
+// isSmallModel checks if the model has <= 4B parameters.
+func isSmallModel(p provider.Provider) bool {
+	mi, ok := p.(provider.ModelInfo)
+	if !ok {
+		return false
+	}
+	size := mi.ParameterSize()
+	if size == "" {
+		return false
+	}
+	// Parse "3.2B" -> 3.2
+	var n float64
+	fmt.Sscanf(strings.TrimSuffix(strings.ToUpper(size), "B"), "%f", &n)
+	return n > 0 && n <= 4
+}
+
 func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
+
+func (a *Agent) SetChatLog(f *os.File) { a.chatLog = f }
+
+func (a *Agent) logChat(role, content string) {
+	if a.chatLog == nil {
+		return
+	}
+	fmt.Fprintf(a.chatLog, "\n--- %s ---\n%s\n", role, content)
+	a.chatLog.Sync()
+}
 
 func (a *Agent) Run(ctx context.Context) {
 	a.tui.PrintBanner()
@@ -55,10 +83,18 @@ func (a *Agent) Run(ctx context.Context) {
 	inputCh := make(chan string, 1)
 	exitCh := make(chan struct{})
 	doneCh := make(chan struct{})
+	gateCh := make(chan struct{}, 1) // controls when reader can read
+	gateCh <- struct{}{}            // start open
 	defer close(doneCh)
 
 	go func() {
 		for {
+			// Wait for gate to open (paused during runLoop to avoid stdin races)
+			select {
+			case <-gateCh:
+			case <-doneCh:
+				return
+			}
 			input, ok := a.tui.ReadInput()
 			if !ok {
 				close(exitCh)
@@ -140,8 +176,15 @@ func (a *Agent) Run(ctx context.Context) {
 			}
 
 			a.history = append(a.history, provider.Message{Role: "user", Content: input})
+			a.logChat("USER", input)
+			// Gate is already consumed by the reader; runLoop owns stdin now
 			a.runLoop(ctx, inputCh)
 			a.tui.ResetSigCount()
+			// Reopen gate so reader can accept next input
+			select {
+			case gateCh <- struct{}{}:
+			default:
+			}
 		}
 	}
 }
@@ -166,13 +209,13 @@ func (a *Agent) runLoop(ctx context.Context, interruptCh <-chan string) {
 		}
 
 		a.tui.StartSpinner("thinking...")
-		tools := a.toolDefs()
-		if a.noTools {
-			tools = nil
+		toolsSent := a.toolDefs()
+		if a.noTools || a.isConversational() {
+			toolsSent = nil
 		}
 		events, err := a.provider.ChatCompletion(ctx, provider.ChatRequest{
 			Messages: a.history,
-			Tools:    tools,
+			Tools:    toolsSent,
 		})
 		if err != nil {
 			a.tui.StopSpinner()
@@ -192,19 +235,30 @@ func (a *Agent) runLoop(ctx context.Context, interruptCh <-chan string) {
 
 		text, toolCalls := a.consumeStream(events)
 
+		// If tools were intentionally not sent, ignore any text-parsed tool calls
+		if toolsSent == nil && len(toolCalls) > 0 {
+			toolCalls = nil
+		}
+
 		if ctx.Err() != nil {
+			// Log any text we got before cancellation
+			if text != "" {
+				a.logChat("ASSISTANT", text)
+			}
 			a.tui.Info("cancelled")
 			return
 		}
 
 		if text != "" {
 			a.history = append(a.history, provider.Message{Role: "assistant", Content: text})
+			a.logChat("ASSISTANT", text)
 		}
 
 		if len(toolCalls) == 0 {
 			// Track models that ignore tools — if they respond with text
 			// but never call tools, disable tools to avoid wasting tokens.
-			if !a.noTools && text != "" {
+			// Only count when tools were actually sent to the model.
+			if !a.noTools && toolsSent != nil && text != "" {
 				a.noToolStrikes++
 				if a.noToolStrikes >= 2 {
 					a.noTools = true
@@ -276,7 +330,7 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 	}
 
 	// If no native tool calls, check if the model emitted tool calls as text
-	if len(toolCalls) == 0 && text.Len() > 0 {
+	if !a.noTools && len(toolCalls) == 0 && text.Len() > 0 {
 		knownTools := make(map[string]bool, len(a.toolMap))
 		for name := range a.toolMap {
 			knownTools[name] = true
@@ -328,6 +382,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 
 	// Kiro-style: show "● Read /path" or "● Shell command"
 	a.tui.ToolStart(tc.Name, summarizeArgs(tc.Arguments))
+	a.logChat("TOOL", fmt.Sprintf("%s %s", tc.Name, summarizeArgs(tc.Arguments)))
 
 	result, err := t.Execute(ctx, tc.Arguments)
 	if err != nil {
@@ -446,8 +501,53 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-func systemPrompt() string {
+
+// isConversational returns true if the last user message is a simple greeting
+// or question that doesn't need tool access. This prevents models like llama3.2
+// from calling tools on "hi" or "thanks".
+func (a *Agent) isConversational() bool {
+	// Find last user message
+	var lastMsg string
+	for i := len(a.history) - 1; i >= 0; i-- {
+		if a.history[i].Role == "user" {
+			lastMsg = strings.ToLower(strings.TrimSpace(a.history[i].Content))
+			break
+		}
+	}
+	if lastMsg == "" {
+		return false
+	}
+	// Short messages with no code/file indicators are likely conversational
+	words := strings.Fields(lastMsg)
+	if len(words) > 5 {
+		return false
+	}
+	// Check for tool-triggering keywords
+	for _, w := range words {
+		for _, kw := range []string{"read", "write", "list", "check", "run", "search", "find", "show",
+			"edit", "fix", "test", "build", "create", "delete", "open", "cat", "grep",
+			"file", "dir", "code", "func", "error", "bug", "implement", ".go", ".js",
+			".py", ".ts", ".md", ".json", ".yaml", ".yml", "internal", "cmd", "src"} {
+			if strings.Contains(w, kw) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func systemPrompt(small bool) string {
 	dir, _ := os.Getwd()
+	if small {
+		return fmt.Sprintf(`You are Forge, an AI coding assistant in the terminal.
+
+You have tools: read_file, write_file, list_directory, shell_exec, search_code.
+Only use tools when the user asks about files, code, or wants to run commands.
+For normal conversation, just respond with text.
+
+Current directory: %s
+Operating system: %s/%s`, dir, runtime.GOOS, runtime.GOARCH)
+	}
 	return fmt.Sprintf(`You are Forge, a terminal-based AI coding assistant. You help developers write, debug, and understand code directly from the command line.
 
 You are direct and concise. You write complete, working code. You explain your reasoning when making decisions.
@@ -473,7 +573,8 @@ Examples:
 - To search code: {"name": "search_code", "arguments": {"pattern": "func main", "include": "*.go"}}
 
 Rules:
-- ALWAYS use tools instead of asking the user for information.
+- Only use tools when the user's request requires file access, code search, or command execution.
+- For greetings, general questions, explanations, or conversation, respond with text — do NOT call tools.
 - NEVER explain what tool you will use. Just call it.
 - Use read_file to read files, NOT shell_exec with cat/head/tail.
 - Read code before editing it.

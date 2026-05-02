@@ -46,6 +46,9 @@ forge chat
 # Auto-approve all tool calls (no confirmation prompts)
 forge chat --yes
 
+# Log prompts and responses to a file
+forge chat --log out/chat.txt
+
 # Ask a one-off question
 forge ask "explain this error" --file main.go
 
@@ -109,6 +112,7 @@ See [docs/config.md](docs/config.md) for the full reference.
 |---------|-------------|
 | `forge chat` | Interactive chat session (default) |
 | `forge chat --yes` | Chat with auto-approved tool calls |
+| `forge chat --log out/chat.txt` | Chat with prompt/response logging |
 | `forge ask "<prompt>"` | Single-shot query |
 | `forge serve --port 8080` | Start REST API server |
 | `forge models` | List available models |

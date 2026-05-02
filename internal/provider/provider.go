@@ -16,6 +16,11 @@ type ModelSwitcher interface {
 	SetModel(model string)
 }
 
+// ModelInfo is optionally implemented by providers that can report model metadata.
+type ModelInfo interface {
+	ParameterSize() string // e.g. "3.2B", "7.6B"
+}
+
 type ChatRequest struct {
 	Messages []Message
 	Tools    []ToolDef

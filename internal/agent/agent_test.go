@@ -706,7 +706,7 @@ func TestExecuteTool_AutoApproveSkipsPermission(t *testing.T) {
 // --- systemPrompt ---
 
 func TestSystemPrompt(t *testing.T) {
-	s := systemPrompt()
+	s := systemPrompt(false)
 	for _, want := range []string{"Forge", "read_file", "write_file", "shell_exec", "search_code", "list_directory", "Current directory"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("systemPrompt missing %q", want)
