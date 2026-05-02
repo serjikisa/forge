@@ -1,7 +1,8 @@
 # Binaries
 bin/
-forge
+/forge
 *.exe
+out
 
 # Build artifacts
 coverage.out
@@ -14,8 +15,10 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.kiro/
 *.swp
 *.swo
 
 # Environment
 .env
+c.out

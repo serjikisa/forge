@@ -6,17 +6,17 @@ Quick reference for Forge's component layout and data flow.
 
 ```
   +--------------------------------------------------+
-  |              Terminal UI Layer                    |
-  |  [Prompt Engine] [Spinner/Status] [Syntax/MD]    |
+  |              Interface Layer                      |
+  |  [Terminal TUI]  [REST API Server]  [Headless]   |
   +--------------------------------------------------+
   |              Agent Orchestrator                   |
-  |  [Concurrent Tool Executor via goroutines]        |
+  |  [Tool Executor] [Text Tool Parser] [Safety]     |
   +--------------------------------------------------+
   |              Provider Layer                       |
   |  Ollama | OpenAI | Anthropic | Bedrock | ...      |
   +--------------------------------------------------+
   |              Context & State                      |
-  |  Sessions | History | File Index | Config         |
+  |  History | Config | Project Boundary              |
   +--------------------------------------------------+
 ```
 
@@ -51,16 +51,24 @@ Quick reference for Forge's component layout and data flow.
 ## Component Responsibilities
 
 **Terminal UI (`internal/tui/`)**
+- Defines `UI` interface implemented by `TUI` (terminal) and `HeadlessTUI` (server)
 - Reads user input (prompt, multi-line)
-- Renders streaming tokens with ANSI colors
+- Renders Kiro-style tool annotations (● bullets, action verbs, detail lines)
 - Shows tool execution status (spinners, checkmarks)
-- Handles terminal width detection (cross-platform)
+- `HeadlessTUI` captures output as structured `Event` objects for the REST API
+
+**Server (`internal/server/`)**
+- HTTP server exposing `POST /v1/chat` and `GET /health`
+- Creates a fresh agent per request with `HeadlessTUI`
+- Supports per-request model switching via `model` field
+- Auto-approves all tool calls in server mode
 
 **Agent (`internal/agent/`)**
 - Owns the conversation loop (message → LLM → tools → repeat)
 - Builds prompts with system instructions and tool definitions
-- Manages context window (tracking token usage, compaction)
-- Coordinates concurrent tool execution via bounded executor
+- Parses text-based tool calls for models without native tool calling
+- Auto-disables tools for models that don't use them
+- Supports auto-approve mode (`--yes`) to skip confirmation prompts
 
 **Provider (`internal/provider/`)**
 - Implements the `Provider` interface per LLM service
@@ -71,6 +79,9 @@ Quick reference for Forge's component layout and data flow.
 **Tool (`internal/tool/`)**
 - Implements the `Tool` interface per capability
 - Each tool declares its safety level (Safe / NeedsConfirmation / Dangerous)
+- Project boundary enforcement: `read_file`, `write_file`, and `shell_exec` block access outside project root
+- `shell_exec` detects file-accessing commands (cat, head, cp, etc.) targeting paths outside the project
+- `write_file` prevents creating `go.mod`/`go.sum` in subdirectories
 - Tools accept `context.Context` for cancellation support
 
 **Config (`internal/config/`)**
