@@ -169,12 +169,14 @@ func (a *Agent) Ask(ctx context.Context, prompt string) {
 
 func (a *Agent) runLoop(ctx context.Context) {
 
+	var suppressTools bool // set after text-parsed tool calls to force synthesis
 	for {
 		a.tui.StartSpinner("thinking...")
 		toolsSent := a.toolDefs()
-		if a.noTools || a.isConversational() {
+		if a.noTools || a.isConversational() || suppressTools {
 			toolsSent = nil
 		}
+		suppressTools = false
 		events, err := a.provider.ChatCompletion(ctx, provider.ChatRequest{
 			Messages: a.history,
 			Tools:    toolsSent,
@@ -233,15 +235,27 @@ func (a *Agent) runLoop(ctx context.Context) {
 		}
 		a.noToolStrikes = 0 // reset on successful tool use
 
-		// Add assistant message with tool calls
-		a.history = append(a.history, provider.Message{
-			Role:      "assistant",
-			ToolCalls: toolCalls,
-		})
-
-		// Execute tools concurrently and add results
+		// Execute tools concurrently
 		results := a.executeToolsConcurrently(ctx, toolCalls)
-		a.history = append(a.history, results...)
+
+		// Check if these were text-parsed tool calls (IDs start with "text_call_").
+		// Models that emit tool calls as text don't understand tool-role responses,
+		// so we inject results as an assistant message summarising what was executed.
+		textParsed := len(toolCalls) > 0 && strings.HasPrefix(toolCalls[0].ID, "text_call_")
+		if textParsed {
+			var buf strings.Builder
+			for i, tc := range toolCalls {
+				buf.WriteString(fmt.Sprintf("I called %s(%s) and got:\n%s\n\n", tc.Name, string(tc.Arguments), results[i].Content))
+			}
+			a.history = append(a.history, provider.Message{Role: "assistant", Content: buf.String()})
+			suppressTools = true
+		} else {
+			a.history = append(a.history, provider.Message{
+				Role:      "assistant",
+				ToolCalls: toolCalls,
+			})
+			a.history = append(a.history, results...)
+		}
 		// Loop back to get the next response
 	}
 }
@@ -532,7 +546,7 @@ Tool selection guide:
 - read_file: Use when asked to read, show, check, or review a specific file. Use for "read X", "show me X", "check X.go".
 - write_file: Use to create or overwrite files.
 - list_directory: Use when asked to list, check, or explore a directory. Use for "list X/", "check internal/", "what's in X".
-- shell_exec: Use ONLY for running commands (build, test, git, etc). Do NOT use shell_exec to read files — use read_file instead.
+- shell_exec: Use for running commands (build, test, git, curl, etc). Use curl to fetch URLs when asked to check websites. Do NOT use shell_exec to read local files — use read_file instead.
 - search_code: Use to find patterns across files. Use for "search for X", "find X", "where is X defined".
 
 CRITICAL: When you need to use a tool, output ONLY the JSON tool call. Do NOT describe what you plan to do — just call the tool directly.

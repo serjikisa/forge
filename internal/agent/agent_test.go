@@ -570,6 +570,44 @@ func TestRunLoop_ToolCallsThenText(t *testing.T) {
 }
 
 // --- consumeStream via agent (text-tool-call parsing path) ---
+func TestRunLoop_TextParsedToolCalls(t *testing.T) {
+	p := &multiStubProvider{
+		callEvents: [][]provider.ChatEvent{
+			// First call: model emits tool call as text (not native)
+			{
+				{Type: provider.EventText, Text: `{"name":"read_file","arguments":{"path":"main.go"}}`},
+				{Type: provider.EventDone},
+			},
+			// Second call: tools suppressed, model synthesizes answer
+			{
+				{Type: provider.EventText, Text: "The file contains a main function."},
+				{Type: provider.EventDone},
+			},
+		},
+	}
+	ui := tui.NewHeadless()
+	tools := []tool.Tool{&stubTool{name: "read_file"}}
+	a := New(p, tools, ui, "test")
+	a.autoApprove = true
+
+	a.history = append(a.history, provider.Message{Role: "user", Content: "read main.go"})
+	a.runLoop(context.Background())
+
+	if p.callCount != 2 {
+		t.Errorf("callCount = %d, want 2", p.callCount)
+	}
+	// Should NOT have any tool-role messages (text-parsed path uses assistant messages)
+	for _, m := range a.history {
+		if m.Role == "tool" {
+			t.Error("unexpected tool-role message in history for text-parsed path")
+		}
+	}
+	// Second call should have had no tools sent (suppressTools)
+	if len(p.lastTools) != 0 {
+		t.Errorf("lastTools = %d, want 0 (tools should be suppressed after text-parsed call)", len(p.lastTools))
+	}
+}
+
 
 func TestConsumeStream_TextToolCallParsing(t *testing.T) {
 	ui := tui.NewHeadless()
