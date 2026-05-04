@@ -5,6 +5,9 @@
 - [ ] **list_directory boundary check** — `list_directory` allows listing directories outside the project (e.g. `/etc`). Should enforce the same `inProject()` check as `read_file`/`write_file`.
 - [ ] **Malformed tool call handling** — llama3.2 generates empty or malformed JSON arguments (`unexpected end of JSON input`). Add graceful error recovery instead of passing errors back to the model in a loop.
 - [ ] **deepseek-r1 tool calling** — Model accepts tools silently but never calls them. Auto-disable kicks in after 2 strikes, but ideally detect this from model metadata or first response and skip tools immediately.
+- [ ] ctrl-J for multiline requests
+- [ ] Tools shows markdowns as ** but I don't except, could we show in bold or different color
+- [ ] each line is max 76 characters, why?
 
 ## Medium Priority
 
@@ -14,6 +17,8 @@
 - [ ] **shell_exec boundary improvements** — Current `extractTargetPath` only catches simple patterns (`cat /etc/passwd`). Piped commands (`cat /etc/passwd | grep root`) and subshells bypass it.
 
 ## Low Priority
+
+- [ ] **LLM eval suite** — Add a dataset of prompts and expected agent behaviors (e.g. "read main.go" should call `read_file` with path `main.go`). Score how often each model picks the right tool with the right arguments. Track scores across models and prompt changes to catch regressions.
 
 - [ ] **Structured logging with slogr for serve mode** — Replace plain `fmt.Fprintf` output in `forge serve` with structured `slog` logging for consistent, parseable server output. We already have a module, ask for path and files.
 - [ ] **Integration test cleanup** — Models can create files during tests (e.g. llama3.2:3b created `internal/go.mod`). Add a post-test `git checkout -- .` or run tests in a temp copy.
