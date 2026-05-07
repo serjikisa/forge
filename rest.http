@@ -1,10 +1,18 @@
 @BASE_URL = http://localhost:8080
 
+###############################################################################
+# Discovery & Health
+###############################################################################
+
 ### Health check
 GET {{BASE_URL}}/health
 
-### API discovery
+### API discovery — lists all available endpoints
 GET {{BASE_URL}}/
+
+###############################################################################
+# Chat (synchronous) — waits for full response
+###############################################################################
 
 ### Simple question
 POST {{BASE_URL}}/v1/chat
@@ -14,7 +22,7 @@ Content-Type: application/json
   "message": "what is 2+2?"
 }
 
-### Read a file
+### Trigger read_file tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -22,7 +30,7 @@ Content-Type: application/json
   "message": "read internal/tui/color.go"
 }
 
-### List directory
+### Trigger list_directory tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -30,15 +38,15 @@ Content-Type: application/json
   "message": "list the files in cmd/forge/"
 }
 
-### Run a command
+### Trigger shell_exec tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
 {
-  "message": "run go test ./pkg/slogr/ -v"
+  "message": "run go version"
 }
 
-### Search code
+### Trigger search_code tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -68,7 +76,32 @@ Content-Type: application/json
   ]
 }
 
-### Boundary check: read outside project — expect error in events
+###############################################################################
+# Chat Stream (SSE) — tokens arrive as server-sent events
+###############################################################################
+
+### Streaming response — each token arrives as a separate SSE event
+POST {{BASE_URL}}/v1/chat/stream
+Content-Type: application/json
+
+{
+  "message": "explain what a goroutine is in 2 sentences"
+}
+
+### Streaming with model override
+POST {{BASE_URL}}/v1/chat/stream
+Content-Type: application/json
+
+{
+  "message": "list files in internal/agent/",
+  "model": "llama3.2:latest"
+}
+
+###############################################################################
+# Boundary checks — expect tool_error with "outside project directory"
+###############################################################################
+
+### read_file outside project — expect tool_error
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -76,7 +109,7 @@ Content-Type: application/json
   "message": "read the file /etc/passwd"
 }
 
-### Boundary check: list outside project — expect error in events
+### list_directory outside project — expect tool_error
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -84,10 +117,18 @@ Content-Type: application/json
   "message": "list the directory /etc"
 }
 
-### Streaming SSE — tokens arrive as server-sent events
-POST {{BASE_URL}}/v1/chat/stream
+###############################################################################
+# Error cases
+###############################################################################
+
+### Empty body — expect 400
+POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
-{
-  "message": "explain what a goroutine is in 2 sentences"
-}
+{}
+
+### Invalid JSON — expect 400
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{bad json}

@@ -1,26 +1,14 @@
 # Backlog
 
-## High Priority
-
-- [ ] **list_directory boundary check** — `list_directory` allows listing directories outside the project (e.g. `/etc`). Should enforce the same `inProject()` check as `read_file`/`write_file`.
-- [ ] **Malformed tool call handling** — llama3.2 generates empty or malformed JSON arguments (`unexpected end of JSON input`). Add graceful error recovery instead of passing errors back to the model in a loop.
-- [ ] **deepseek-r1 tool calling** — Model accepts tools silently but never calls them. Auto-disable kicks in after 2 strikes, but ideally detect this from model metadata or first response and skip tools immediately.
-
-## Medium Priority
-
-(empty)
-
-## Low Priority
+## Open
 
 - [ ] **LLM eval suite** — Add a dataset of prompts and expected agent behaviors (e.g. "read main.go" should call `read_file` with path `main.go`). Score how often each model picks the right tool with the right arguments. Track scores across models and prompt changes to catch regressions.
 
 ## Done
 
-- [x] Ctrl+J for multiline input
-- [x] Markdown **bold** rendered as ANSI bold in terminal
-- [x] Terminal width detection (was hardcoded 80, now uses actual size)
-- [x] Structured logging with slogr (pretty/text/JSON modes)
-- [x] Conversation history for server mode (multi-role messages API)
+- [x] list_directory boundary check
+- [x] Malformed tool call handling (graceful recovery for empty/invalid JSON)
+- [x] deepseek-r1 tool calling (auto-detect and disable tools immediately)
 - [x] Strip echoed tool calls from text
 - [x] Concurrent request safety (mutex on shared provider)
 - [x] shell_exec boundary improvements (pipes, chains, subshells)
@@ -29,6 +17,11 @@
 - [x] Context window management (auto-compaction when history exceeds budget)
 - [x] Model-specific prompt tuning (model_prompts in config)
 - [x] Integration test cleanup (git checkout trap on exit)
+- [x] Ctrl+J for multiline input
+- [x] Markdown **bold** rendered as ANSI bold in terminal
+- [x] Terminal width detection (actual terminal size)
+- [x] Structured logging with slogr (pretty/text/JSON modes)
+- [x] Conversation history for server mode (multi-role messages API)
 - [x] Kiro-style TUI output (● bullets, action verbs, detail lines)
 - [x] Orange FORGE braille logo
 - [x] REST API server mode (`forge serve`)
