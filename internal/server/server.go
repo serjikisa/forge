@@ -31,6 +31,7 @@ type Server struct {
 	model    string
 	mu       sync.Mutex
 	mux      *http.ServeMux
+	srv      *http.Server
 }
 
 func New(p provider.Provider, model string) *Server {
@@ -44,7 +45,16 @@ func New(p provider.Provider, model string) *Server {
 
 func (s *Server) ListenAndServe(addr string) error {
 	slogr.Info("forge server listening", "addr", addr)
-	return http.ListenAndServe(addr, s.mux)
+	s.srv = &http.Server{Addr: addr, Handler: s.mux}
+	return s.srv.ListenAndServe()
+}
+
+// Shutdown gracefully drains in-flight requests.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.srv != nil {
+		return s.srv.Shutdown(ctx)
+	}
+	return nil
 }
 
 func (s *Server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {

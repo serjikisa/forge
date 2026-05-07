@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"time"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/config"
@@ -113,10 +115,12 @@ func runServe(_ context.Context, cfg *config.Config) {
 	go func() {
 		<-sigCh
 		fmt.Fprintf(os.Stderr, "\nshutting down...\n")
-		os.Exit(0)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.Shutdown(ctx)
 	}()
 
-	if err := s.ListenAndServe(addr); err != nil {
+	if err := s.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

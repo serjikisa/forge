@@ -64,6 +64,9 @@ func (w *WriteFile) Execute(_ context.Context, params json.RawMessage) (string, 
 		return "", err
 	}
 	p.Path = expandHome(p.Path)
+	if !inProject(p.Path) {
+		return "", fmt.Errorf("path %q is outside project directory", p.Path)
+	}
 	// Prevent creating go.mod/go.sum in subdirectories (breaks module resolution)
 	base := filepath.Base(p.Path)
 	if base == "go.mod" || base == "go.sum" {
