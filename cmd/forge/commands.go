@@ -100,7 +100,17 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 func runServe(_ context.Context, cfg *config.Config) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := fs.Int("port", 8080, "port to listen on")
-	if err := fs.Parse(os.Args[2:]); err != nil {
+	// Filter out --provider and --model flags before parsing
+	var serveArgs []string
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--provider" || args[i] == "--model") && i+1 < len(args) {
+			i++ // skip value
+			continue
+		}
+		serveArgs = append(serveArgs, args[i])
+	}
+	if err := fs.Parse(serveArgs); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

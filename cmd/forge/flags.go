@@ -20,6 +20,16 @@ func newProvider(cfg *config.Config, name, model string) provider.Provider {
 			model = pc.Model
 		}
 		return provider.NewOllama(host, model)
+	case "bedrock":
+		pc := cfg.Providers["bedrock"]
+		region := pc.Region
+		if region == "" {
+			region = "us-east-1"
+		}
+		if model == "" {
+			model = pc.Model
+		}
+		return provider.NewBedrock(region, model)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown provider: %s\n", name)
 		os.Exit(1)
@@ -36,6 +46,9 @@ func resolveProviderModel(cfg *config.Config) (string, string) {
 
 	if v := os.Getenv("FORGE_PROVIDER"); v != "" {
 		prov = v
+		if p, ok := cfg.Providers[prov]; ok && model == "" {
+			model = p.Model
+		}
 	}
 	if v := os.Getenv("FORGE_MODEL"); v != "" {
 		model = v
@@ -45,6 +58,9 @@ func resolveProviderModel(cfg *config.Config) (string, string) {
 		switch os.Args[i] {
 		case "--provider":
 			prov = os.Args[i+1]
+			if p, ok := cfg.Providers[prov]; ok {
+				model = p.Model
+			}
 		case "--model":
 			model = os.Args[i+1]
 		}

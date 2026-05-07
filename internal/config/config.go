@@ -33,6 +33,9 @@ func Load() *Config {
 	path := configPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			createDefault(path, cfg)
+		}
 		return cfg
 	}
 
@@ -46,6 +49,18 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+func createDefault(path string, cfg *Config) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 func defaults() *Config {

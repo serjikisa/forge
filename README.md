@@ -94,7 +94,7 @@ On first run, Forge will prompt you to select a provider and model.
 
 ## Configuration
 
-Config lives at `~/.forge/config.json`. Set your default provider and model:
+Config lives at `~/.forge/config.json`. Created automatically on first run.
 
 ```json
 {
@@ -103,10 +103,16 @@ Config lives at `~/.forge/config.json`. Set your default provider and model:
     "ollama": {
       "host": "http://localhost:11434",
       "model": "llama3"
+    },
+    "bedrock": {
+      "region": "us-west-2",
+      "model": "us.anthropic.claude-sonnet-4-20250514-v1:0"
     }
   }
 }
 ```
+
+**Bedrock auth:** reads from `~/.aws/credentials` (uses `AWS_PROFILE` env var, defaults to `[default]`).
 
 API keys are read from environment variables — never stored in the config file.
 
