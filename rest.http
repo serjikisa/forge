@@ -1,0 +1,69 @@
+@BASE_URL = http://localhost:8080
+
+### Health check
+GET {{BASE_URL}}/health
+
+### API discovery
+GET {{BASE_URL}}/
+
+### Simple question
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "what is 2+2?"
+}
+
+### Read a file
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "read internal/tui/color.go"
+}
+
+### List directory
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "list the files in cmd/forge/"
+}
+
+### Run a command
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "run go test ./pkg/slogr/ -v"
+}
+
+### Search code
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "search for func main across all .go files"
+}
+
+### Use a specific model
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "explain what forge does in one sentence",
+  "model": "llama3.2:latest"
+}
+
+### Multi-turn conversation with roles
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {"role": "system", "content": "You are a helpful coding assistant. Be concise."},
+    {"role": "user", "content": "what is a goroutine?"},
+    {"role": "assistant", "content": "A goroutine is a lightweight thread managed by the Go runtime."},
+    {"role": "user", "content": "how do I start one?"}
+  ]
+}

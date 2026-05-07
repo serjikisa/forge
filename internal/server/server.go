@@ -16,8 +16,9 @@ import (
 )
 
 type ChatRequest struct {
-	Message string `json:"message"`
-	Model   string `json:"model,omitempty"`
+	Message  string             `json:"message,omitempty"`
+	Messages []provider.Message `json:"messages,omitempty"`
+	Model    string             `json:"model,omitempty"`
 }
 
 type ChatResponse struct {
@@ -67,28 +68,33 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	if req.Message == "" {
-		http.Error(w, `{"error":"message is required"}`, http.StatusBadRequest)
+	if req.Message == "" && len(req.Messages) == 0 {
+		http.Error(w, `{"error":"message or messages is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	slogr.Info("chat request", "message", req.Message)
+	slogr.Info("chat request", "message", req.Message, "messages_count", len(req.Messages))
 
 	model := s.model
 	if req.Model != "" {
 		if sw, ok := s.provider.(provider.ModelSwitcher); ok {
 			sw.SetModel(req.Model)
 			model = req.Model
-			defer sw.SetModel(s.model) // restore default after request
+			defer sw.SetModel(s.model)
 		}
 	}
-	slogr.Info("using model", "model", model)
 
 	headless := tui.NewHeadless()
 	tools := tool.Registry()
 	a := agent.New(s.provider, tools, headless, model)
 	a.SetAutoApprove(true)
-	a.Ask(context.Background(), req.Message)
+
+	if len(req.Messages) > 0 {
+		a.SetHistory(req.Messages)
+		a.Continue(context.Background())
+	} else {
+		a.Ask(context.Background(), req.Message)
+	}
 
 	events := headless.Events()
 	for _, e := range events {
@@ -99,8 +105,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			slogr.Info("chat response", "type", e.Type, "tool", e.Tool, "detail", e.Detail)
 		case "tool_error", "error":
 			slogr.Warn("chat response", "type", e.Type, "error", e.Error)
-		default:
-			slogr.Info("chat response", "type", e.Type)
 		}
 	}
 

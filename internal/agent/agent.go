@@ -69,6 +69,9 @@ func isSmallModel(p provider.Provider) bool {
 
 func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
 
+// SetHistory replaces the conversation history (including system prompt).
+func (a *Agent) SetHistory(msgs []provider.Message) { a.history = msgs }
+
 func (a *Agent) SetChatLog(f *os.File) { a.chatLog = f }
 
 func (a *Agent) logChat(role, content string) {
@@ -167,6 +170,11 @@ func (a *Agent) Run(ctx context.Context) {
 
 func (a *Agent) Ask(ctx context.Context, prompt string) {
 	a.history = append(a.history, provider.Message{Role: "user", Content: prompt})
+	a.runLoop(ctx)
+}
+
+// Continue runs the agent loop on the existing history without appending a new message.
+func (a *Agent) Continue(ctx context.Context) {
 	a.runLoop(ctx)
 }
 
