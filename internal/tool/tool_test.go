@@ -83,15 +83,15 @@ func TestProjectDir(t *testing.T) {
 
 func TestRegistry(t *testing.T) {
 	tools := Registry()
-	if len(tools) != 5 {
-		t.Fatalf("expected 5 tools, got %d", len(tools))
+	if len(tools) != 7 {
+		t.Fatalf("expected 7 tools, got %d", len(tools))
 	}
 	got := make([]string, len(tools))
 	for i, tl := range tools {
 		got[i] = tl.Name()
 	}
 	sort.Strings(got)
-	want := []string{"list_directory", "read_file", "search_code", "shell_exec", "write_file"}
+	want := []string{"list_directory", "read_file", "search_code", "shell_exec", "web_fetch", "web_search", "write_file"}
 	sort.Strings(want)
 	for i := range want {
 		if got[i] != want[i] {

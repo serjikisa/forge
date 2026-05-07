@@ -4,9 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"time"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/config"
@@ -26,6 +28,12 @@ func runChat(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if prompt, ok := cfg.ModelPrompts[model]; ok {
+		a.SetSystemPrompt(prompt)
+	}
+	if sp := resolveSystemPrompt(); sp != "" {
+		a.SetSystemPrompt(sp)
+	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
@@ -77,6 +85,12 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if prompt, ok := cfg.ModelPrompts[model]; ok {
+		a.SetSystemPrompt(prompt)
+	}
+	if sp := resolveSystemPrompt(); sp != "" {
+		a.SetSystemPrompt(sp)
+	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
@@ -86,7 +100,17 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 func runServe(_ context.Context, cfg *config.Config) {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := fs.Int("port", 8080, "port to listen on")
-	if err := fs.Parse(os.Args[2:]); err != nil {
+	// Filter out --provider and --model flags before parsing
+	var serveArgs []string
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--provider" || args[i] == "--model") && i+1 < len(args) {
+			i++ // skip value
+			continue
+		}
+		serveArgs = append(serveArgs, args[i])
+	}
+	if err := fs.Parse(serveArgs); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
@@ -107,10 +131,12 @@ func runServe(_ context.Context, cfg *config.Config) {
 	go func() {
 		<-sigCh
 		fmt.Fprintf(os.Stderr, "\nshutting down...\n")
-		os.Exit(0)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		s.Shutdown(ctx)
 	}()
 
-	if err := s.ListenAndServe(addr); err != nil {
+	if err := s.ListenAndServe(addr); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}

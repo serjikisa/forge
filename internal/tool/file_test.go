@@ -225,3 +225,62 @@ func TestListDir_Execute(t *testing.T) {
 		}
 	})
 }
+
+func TestReadFile_BoundaryCheck(t *testing.T) {
+	ctx := context.Background()
+	r := &ReadFile{}
+
+	t.Run("rejects path outside project", func(t *testing.T) {
+		_, err := r.Execute(ctx, json.RawMessage(`{"path":"/etc/passwd"}`))
+		if err == nil {
+			t.Fatal("expected error for path outside project")
+		}
+		if !strings.Contains(err.Error(), "outside project directory") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("allows path inside project", func(t *testing.T) {
+		dir := t.TempDir()
+		old, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(old)
+		// Create .git so this dir is the project root
+		os.Mkdir(".git", 0o755)
+		os.WriteFile("ok.txt", []byte("fine"), 0o644)
+
+		_, err := r.Execute(ctx, json.RawMessage(`{"path":"ok.txt"}`))
+		if err != nil {
+			t.Fatalf("unexpected error for in-project path: %v", err)
+		}
+	})
+}
+
+func TestListDir_BoundaryCheck(t *testing.T) {
+	ctx := context.Background()
+	l := &ListDir{}
+
+	t.Run("rejects path outside project", func(t *testing.T) {
+		_, err := l.Execute(ctx, json.RawMessage(`{"path":"/etc"}`))
+		if err == nil {
+			t.Fatal("expected error for path outside project")
+		}
+		if !strings.Contains(err.Error(), "outside project directory") {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("allows path inside project", func(t *testing.T) {
+		dir := t.TempDir()
+		old, _ := os.Getwd()
+		os.Chdir(dir)
+		defer os.Chdir(old)
+		os.Mkdir(".git", 0o755)
+		os.Mkdir("subdir", 0o755)
+
+		_, err := l.Execute(ctx, json.RawMessage(`{"path":"subdir"}`))
+		if err != nil {
+			t.Fatalf("unexpected error for in-project path: %v", err)
+		}
+	})
+}

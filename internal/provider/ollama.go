@@ -157,7 +157,9 @@ type ollamaStreamChunk struct {
 		Content   string            `json:"content"`
 		ToolCalls []ollamaToolCall  `json:"tool_calls,omitempty"`
 	} `json:"message"`
-	Done bool `json:"done"`
+	Done               bool `json:"done"`
+	PromptEvalCount    int  `json:"prompt_eval_count,omitempty"`
+	EvalCount          int  `json:"eval_count,omitempty"`
 }
 
 func (o *Ollama) ChatCompletion(ctx context.Context, req ChatRequest) (<-chan ChatEvent, error) {
@@ -257,7 +259,14 @@ func (o *Ollama) ChatCompletion(ctx context.Context, req ChatRequest) (<-chan Ch
 			}
 
 			if chunk.Done {
-				ch <- ChatEvent{Type: EventDone}
+				ev := ChatEvent{Type: EventDone}
+				if chunk.PromptEvalCount > 0 || chunk.EvalCount > 0 {
+					ev.Usage = &Usage{
+						PromptTokens: chunk.PromptEvalCount,
+						OutputTokens: chunk.EvalCount,
+					}
+				}
+				ch <- ev
 				return
 			}
 		}

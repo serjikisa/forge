@@ -1,31 +1,27 @@
 # Backlog
 
-## High Priority
-
-- [ ] **list_directory boundary check** — `list_directory` allows listing directories outside the project (e.g. `/etc`). Should enforce the same `inProject()` check as `read_file`/`write_file`.
-- [ ] **Malformed tool call handling** — llama3.2 generates empty or malformed JSON arguments (`unexpected end of JSON input`). Add graceful error recovery instead of passing errors back to the model in a loop.
-- [ ] **deepseek-r1 tool calling** — Model accepts tools silently but never calls them. Auto-disable kicks in after 2 strikes, but ideally detect this from model metadata or first response and skip tools immediately.
-
-## Medium Priority
-
-- [ ] **Strip echoed tool calls from text** — qwen2.5-coder echoes the JSON tool call in its text response. The texttools parser extracts the call but leaves the JSON in the displayed text. Should strip it cleanly.
-- [ ] **Concurrent request safety** — Server switches model on the shared provider with `SetModel()`. Concurrent requests with different models will race. Use per-request provider instances or a mutex.
-- [ ] **shell_exec boundary improvements** — Current `extractTargetPath` only catches simple patterns (`cat /etc/passwd`). Piped commands (`cat /etc/passwd | grep root`) and subshells bypass it.
-
-## Low Priority
+## Open
 
 - [ ] **LLM eval suite** — Add a dataset of prompts and expected agent behaviors (e.g. "read main.go" should call `read_file` with path `main.go`). Score how often each model picks the right tool with the right arguments. Track scores across models and prompt changes to catch regressions.
-- [ ] **Integration test cleanup** — Models can create files during tests (e.g. llama3.2:3b created `internal/go.mod`). Add a post-test `git checkout -- .` or run tests in a temp copy.
-- [ ] **Model-specific prompt tuning** — Different models respond better to different prompt styles. Add per-model prompt overrides in config.
-- [ ] **Streaming API** — Add SSE/WebSocket endpoint for streaming responses instead of waiting for full completion.
-- [ ] **Token usage tracking** — Track and display token counts per request for cost awareness.
-- [ ] **Context window management** — Implement conversation compaction when history exceeds model context limit (described in prompts.md but not implemented).
+- [ ] **Homebrew distribution** — Create a Homebrew tap (forge-cli/tap) with a formula that builds from source or downloads a pre-built binary. Set up GitHub Actions to publish releases with goreleaser.
+- [ ] **Versioning and update check** — Embed version at build time via ldflags. Add `forge update` or a startup check that compares local version against latest GitHub release and notifies the user.
 
 ## Done
 
+- [x] list_directory boundary check
+- [x] Malformed tool call handling (graceful recovery for empty/invalid JSON)
+- [x] deepseek-r1 tool calling (auto-detect and disable tools immediately)
+- [x] Strip echoed tool calls from text
+- [x] Concurrent request safety (mutex on shared provider)
+- [x] shell_exec boundary improvements (pipes, chains, subshells)
+- [x] Streaming API (SSE endpoint /v1/chat/stream)
+- [x] Token usage tracking (prompt + output displayed after each response)
+- [x] Context window management (auto-compaction when history exceeds budget)
+- [x] Model-specific prompt tuning (model_prompts in config)
+- [x] Integration test cleanup (git checkout trap on exit)
 - [x] Ctrl+J for multiline input
 - [x] Markdown **bold** rendered as ANSI bold in terminal
-- [x] Terminal width detection (was hardcoded 80, now uses actual size)
+- [x] Terminal width detection (actual terminal size)
 - [x] Structured logging with slogr (pretty/text/JSON modes)
 - [x] Conversation history for server mode (multi-role messages API)
 - [x] Kiro-style TUI output (● bullets, action verbs, detail lines)

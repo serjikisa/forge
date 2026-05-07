@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/provider"
@@ -28,20 +29,32 @@ type ChatResponse struct {
 type Server struct {
 	provider provider.Provider
 	model    string
+	mu       sync.Mutex
 	mux      *http.ServeMux
+	srv      *http.Server
 }
 
 func New(p provider.Provider, model string) *Server {
 	s := &Server{provider: p, model: model, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /", s.handleDiscovery)
 	s.mux.HandleFunc("POST /v1/chat", s.handleChat)
+	s.mux.HandleFunc("POST /v1/chat/stream", s.handleChatStream)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	return s
 }
 
 func (s *Server) ListenAndServe(addr string) error {
 	slogr.Info("forge server listening", "addr", addr)
-	return http.ListenAndServe(addr, s.mux)
+	s.srv = &http.Server{Addr: addr, Handler: s.mux}
+	return s.srv.ListenAndServe()
+}
+
+// Shutdown gracefully drains in-flight requests.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.srv != nil {
+		return s.srv.Shutdown(ctx)
+	}
+	return nil
 }
 
 func (s *Server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
@@ -53,6 +66,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 			{"method": "GET", "path": "/", "description": "API discovery"},
 			{"method": "GET", "path": "/health", "description": "Health check"},
 			{"method": "POST", "path": "/v1/chat", "description": "Send a chat message. Body: {\"message\": \"...\", \"model\": \"...(optional)\"}"},
+			{"method": "POST", "path": "/v1/chat/stream", "description": "SSE streaming chat. Same body as /v1/chat, returns server-sent events"},
 		},
 	})
 }
@@ -78,10 +92,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	model := s.model
 	if req.Model != "" {
 		if sw, ok := s.provider.(provider.ModelSwitcher); ok {
+			s.mu.Lock()
 			sw.SetModel(req.Model)
 			model = req.Model
-			defer sw.SetModel(s.model)
+			defer func() {
+				sw.SetModel(s.model)
+				s.mu.Unlock()
+			}()
 		}
+	} else {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 	}
 
 	headless := tui.NewHeadless()
@@ -110,4 +131,63 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ChatResponse{Events: events})
+}
+
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	var req ChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	if req.Message == "" && len(req.Messages) == 0 {
+		http.Error(w, `{"error":"message or messages is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, `{"error":"streaming not supported"}`, http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	model := s.model
+	if req.Model != "" {
+		if sw, ok := s.provider.(provider.ModelSwitcher); ok {
+			s.mu.Lock()
+			sw.SetModel(req.Model)
+			model = req.Model
+			defer func() {
+				sw.SetModel(s.model)
+				s.mu.Unlock()
+			}()
+		}
+	} else {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+	}
+
+	streaming, events := tui.NewStreaming()
+	tools := tool.Registry()
+	a := agent.New(s.provider, tools, streaming, model)
+	a.SetAutoApprove(true)
+
+	go func() {
+		defer streaming.Close()
+		if len(req.Messages) > 0 {
+			a.SetHistory(req.Messages)
+			a.Continue(context.Background())
+		} else {
+			a.Ask(context.Background(), req.Message)
+		}
+	}()
+
+	for ev := range events {
+		data, _ := json.Marshal(ev)
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
 }

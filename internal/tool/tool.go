@@ -33,6 +33,8 @@ func Registry() []Tool {
 		&ListDir{},
 		&ShellExec{},
 		&SearchCode{},
+		&WebSearch{},
+		&WebFetch{},
 	}
 }
 

@@ -1,10 +1,18 @@
 @BASE_URL = http://localhost:8080
 
+###############################################################################
+# Discovery & Health
+###############################################################################
+
 ### Health check
 GET {{BASE_URL}}/health
 
-### API discovery
+### API discovery — lists all available endpoints
 GET {{BASE_URL}}/
+
+###############################################################################
+# Chat (synchronous) — waits for full response
+###############################################################################
 
 ### Simple question
 POST {{BASE_URL}}/v1/chat
@@ -14,7 +22,7 @@ Content-Type: application/json
   "message": "what is 2+2?"
 }
 
-### Read a file
+### Trigger read_file tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -22,7 +30,7 @@ Content-Type: application/json
   "message": "read internal/tui/color.go"
 }
 
-### List directory
+### Trigger list_directory tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -30,15 +38,15 @@ Content-Type: application/json
   "message": "list the files in cmd/forge/"
 }
 
-### Run a command
+### Trigger shell_exec tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
 {
-  "message": "run go test ./pkg/slogr/ -v"
+  "message": "run go version"
 }
 
-### Search code
+### Trigger search_code tool
 POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
@@ -66,4 +74,107 @@ Content-Type: application/json
     {"role": "assistant", "content": "A goroutine is a lightweight thread managed by the Go runtime."},
     {"role": "user", "content": "how do I start one?"}
   ]
+}
+
+###############################################################################
+# Chat Stream (SSE) — tokens arrive as server-sent events
+###############################################################################
+
+### Streaming response — each token arrives as a separate SSE event
+POST {{BASE_URL}}/v1/chat/stream
+Content-Type: application/json
+
+{
+  "message": "explain what a goroutine is in 2 sentences"
+}
+
+### Streaming with model override
+POST {{BASE_URL}}/v1/chat/stream
+Content-Type: application/json
+
+{
+  "message": "list files in internal/agent/",
+  "model": "llama3.2:latest"
+}
+
+###############################################################################
+# Boundary checks — expect tool_error with "outside project directory"
+###############################################################################
+
+### read_file outside project — expect tool_error
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "read the file /etc/passwd"
+}
+
+### list_directory outside project — expect tool_error
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "list the directory /etc"
+}
+
+###############################################################################
+# Error cases
+###############################################################################
+
+### Empty body — expect 400
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{}
+
+### Invalid JSON — expect 400
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{bad json}
+
+###############################################################################
+# Custom System Prompt — override agent identity
+###############################################################################
+
+### Change agent name via system prompt
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {"role": "system", "content": "You are Jarvis, Tony Stark's personal AI assistant. You are witty, helpful, and always address the user as Sir."},
+    {"role": "user", "content": "Who are you?"}
+  ]
+}
+
+### System prompt as code reviewer
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {"role": "system", "content": "You are a strict code reviewer. Rate code quality 1-10 and list issues."},
+    {"role": "user", "content": "read internal/tool/web_search.go and review it"}
+  ]
+}
+
+###############################################################################
+# Web Tools — web_search and web_fetch
+###############################################################################
+
+### Web search
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "search the web for Go 1.22 release notes"
+}
+
+### Web fetch
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "fetch the content of https://go.dev/doc/go1.22"
 }

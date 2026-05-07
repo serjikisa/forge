@@ -67,6 +67,13 @@ type ChatEvent struct {
 	Text     string
 	ToolCall *ToolCall
 	Error    error
+	Usage    *Usage
+}
+
+// Usage tracks token counts for a completion.
+type Usage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	OutputTokens int `json:"output_tokens"`
 }
 
 type Model struct {

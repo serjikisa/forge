@@ -10,12 +10,13 @@ import (
 )
 
 type Config struct {
-	DefaultProvider string            `json:"default_provider"`
-	Theme           string            `json:"theme"`
-	LogLevel        string            `json:"log_level"`
-	LogFormat       string            `json:"log_format"`
-	MaxConcurrency  int               `json:"max_concurrency"`
+	DefaultProvider string              `json:"default_provider"`
+	Theme           string              `json:"theme"`
+	LogLevel        string              `json:"log_level"`
+	LogFormat       string              `json:"log_format"`
+	MaxConcurrency  int                 `json:"max_concurrency"`
 	Providers       map[string]Provider `json:"providers"`
+	ModelPrompts    map[string]string   `json:"model_prompts,omitempty"`
 }
 
 type Provider struct {
@@ -32,6 +33,9 @@ func Load() *Config {
 	path := configPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			createDefault(path, cfg)
+		}
 		return cfg
 	}
 
@@ -45,6 +49,18 @@ func Load() *Config {
 	}
 
 	return cfg
+}
+
+func createDefault(path string, cfg *Config) {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 func defaults() *Config {

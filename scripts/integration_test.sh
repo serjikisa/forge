@@ -28,6 +28,13 @@ if [ -n "$OUTPUT_FILE" ]; then
 fi
 
 PORT="${FORGE_PORT:-8080}"
+
+# Clean up any files created by models during tests
+cleanup() {
+    git checkout -- . 2>/dev/null || true
+    git clean -fd --exclude=out/ 2>/dev/null || true
+}
+trap cleanup EXIT
 BASE="http://localhost:${PORT}"
 TIMEOUT="${FORGE_TIMEOUT:-180}"
 PASS=0
