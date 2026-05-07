@@ -1,3 +1,5 @@
+// file.go implements the read_file, write_file, and list_directory tools for
+// filesystem access with binary detection and go.mod protection.
 package tool
 
 import (
@@ -25,9 +27,7 @@ func (r *ReadFile) Execute(_ context.Context, params json.RawMessage) (string, e
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", err
 	}
-	if !inProject(p.Path) {
-		return "", fmt.Errorf("path %q is outside project directory", p.Path)
-	}
+	p.Path = expandHome(p.Path)
 	data, err := os.ReadFile(p.Path)
 	if err != nil {
 		return "", err
@@ -60,9 +60,7 @@ func (w *WriteFile) Execute(_ context.Context, params json.RawMessage) (string, 
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", err
 	}
-	if !inProject(p.Path) {
-		return "", fmt.Errorf("path %q is outside project directory", p.Path)
-	}
+	p.Path = expandHome(p.Path)
 	// Prevent creating go.mod/go.sum in subdirectories (breaks module resolution)
 	base := filepath.Base(p.Path)
 	if base == "go.mod" || base == "go.sum" {
@@ -99,6 +97,7 @@ func (l *ListDir) Execute(_ context.Context, params json.RawMessage) (string, er
 	if p.Path == "" {
 		p.Path = "."
 	}
+	p.Path = expandHome(p.Path)
 
 	entries, err := os.ReadDir(p.Path)
 	if err != nil {

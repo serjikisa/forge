@@ -1,21 +1,24 @@
+// Package server exposes forge as a REST API. It provides /v1/chat for sending
+// messages, /health for liveness checks, and / for endpoint discovery.
 package server
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/provider"
 	"github.com/serjikisa/forge/internal/tool"
 	"github.com/serjikisa/forge/internal/tui"
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type ChatRequest struct {
-	Message string `json:"message"`
-	Model   string `json:"model,omitempty"`
+	Message  string             `json:"message,omitempty"`
+	Messages []provider.Message `json:"messages,omitempty"`
+	Model    string             `json:"model,omitempty"`
 }
 
 type ChatResponse struct {
@@ -30,14 +33,28 @@ type Server struct {
 
 func New(p provider.Provider, model string) *Server {
 	s := &Server{provider: p, model: model, mux: http.NewServeMux()}
+	s.mux.HandleFunc("GET /", s.handleDiscovery)
 	s.mux.HandleFunc("POST /v1/chat", s.handleChat)
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	return s
 }
 
 func (s *Server) ListenAndServe(addr string) error {
-	slog.Info("forge server listening", "addr", addr)
+	slogr.Info("forge server listening", "addr", addr)
 	return http.ListenAndServe(addr, s.mux)
+}
+
+func (s *Server) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"name":  "forge",
+		"model": s.model,
+		"endpoints": []map[string]string{
+			{"method": "GET", "path": "/", "description": "API discovery"},
+			{"method": "GET", "path": "/health", "description": "Health check"},
+			{"method": "POST", "path": "/v1/chat", "description": "Send a chat message. Body: {\"message\": \"...\", \"model\": \"...(optional)\"}"},
+		},
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -51,40 +68,43 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	if req.Message == "" {
-		http.Error(w, `{"error":"message is required"}`, http.StatusBadRequest)
+	if req.Message == "" && len(req.Messages) == 0 {
+		http.Error(w, `{"error":"message or messages is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	slog.Info("chat request", "message", req.Message)
+	slogr.Info("chat request", "message", req.Message, "messages_count", len(req.Messages))
 
 	model := s.model
 	if req.Model != "" {
 		if sw, ok := s.provider.(provider.ModelSwitcher); ok {
 			sw.SetModel(req.Model)
 			model = req.Model
-			defer sw.SetModel(s.model) // restore default after request
+			defer sw.SetModel(s.model)
 		}
 	}
-	slog.Info("using model", "model", model)
 
 	headless := tui.NewHeadless()
 	tools := tool.Registry()
 	a := agent.New(s.provider, tools, headless, model)
 	a.SetAutoApprove(true)
-	a.Ask(context.Background(), req.Message)
+
+	if len(req.Messages) > 0 {
+		a.SetHistory(req.Messages)
+		a.Continue(context.Background())
+	} else {
+		a.Ask(context.Background(), req.Message)
+	}
 
 	events := headless.Events()
 	for _, e := range events {
 		switch e.Type {
 		case "text":
-			slog.Info("chat response", "type", e.Type, "text", e.Text)
+			slogr.Info("chat response", "type", e.Type, "text", e.Text)
 		case "tool_start", "tool_done":
-			slog.Info("chat response", "type", e.Type, "tool", e.Tool, "detail", e.Detail)
+			slogr.Info("chat response", "type", e.Type, "tool", e.Tool, "detail", e.Detail)
 		case "tool_error", "error":
-			slog.Warn("chat response", "type", e.Type, "error", e.Error)
-		default:
-			slog.Info("chat response", "type", e.Type)
+			slogr.Warn("chat response", "type", e.Type, "error", e.Error)
 		}
 	}
 

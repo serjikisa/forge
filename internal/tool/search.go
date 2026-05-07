@@ -1,3 +1,5 @@
+// search.go implements the search_code tool for regex-based code search across
+// project files with glob filtering and directory skipping.
 package tool
 
 import (
@@ -43,6 +45,7 @@ func (s *SearchCode) Execute(ctx context.Context, params json.RawMessage) (strin
 	if root == "" {
 		root = "."
 	}
+	root = expandHome(root)
 
 	var results strings.Builder
 	count := 0

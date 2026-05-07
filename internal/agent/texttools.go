@@ -1,3 +1,6 @@
+// texttools.go parses tool calls that models emit as plain text (JSON in prose or
+// code fences) rather than structured tool_calls, enabling tool use with models that
+// lack native function calling support.
 package agent
 
 import (

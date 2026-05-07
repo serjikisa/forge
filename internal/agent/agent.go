@@ -1,10 +1,12 @@
+// Package agent implements the core chat loop: reading user input, sending messages
+// to the LLM provider, parsing tool calls, executing tools concurrently, and streaming
+// responses back through the UI.
 package agent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/serjikisa/forge/internal/provider"
 	"github.com/serjikisa/forge/internal/tool"
 	"github.com/serjikisa/forge/internal/tui"
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type Agent struct {
@@ -21,9 +24,13 @@ type Agent struct {
 	tui      tui.UI
 	history  []provider.Message
 	model    string
-	noTools       bool
-	noToolStrikes int
-	autoApprove   bool
+	noTools        bool
+	noToolStrikes  int
+	textToolMode   bool // model emits tool calls as text, not native
+	autoApprove    bool
+	maxConcurrency int
+	perms          *Permissions
+	chatLog        *os.File
 }
 
 func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
@@ -31,17 +38,49 @@ func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent
 	for _, t := range tools {
 		tm[t.Name()] = t
 	}
+	small := isSmallModel(p)
 	return &Agent{
-		provider: p,
-		tools:    tools,
-		toolMap:  tm,
-		tui:      ui,
-		history:  []provider.Message{{Role: "system", Content: systemPrompt()}},
-		model:    model,
+		provider:       p,
+		tools:          tools,
+		toolMap:        tm,
+		tui:            ui,
+		history:        []provider.Message{{Role: "system", Content: systemPrompt(small)}},
+		model:          model,
+		maxConcurrency: 5,
+		perms:          NewPermissions(),
 	}
 }
 
+// isSmallModel checks if the model has <= 4B parameters.
+func isSmallModel(p provider.Provider) bool {
+	mi, ok := p.(provider.ModelInfo)
+	if !ok {
+		return false
+	}
+	size := mi.ParameterSize()
+	if size == "" {
+		return false
+	}
+	// Parse "3.2B" -> 3.2
+	var n float64
+	fmt.Sscanf(strings.TrimSuffix(strings.ToUpper(size), "B"), "%f", &n)
+	return n > 0 && n <= 4
+}
+
 func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
+
+// SetHistory replaces the conversation history (including system prompt).
+func (a *Agent) SetHistory(msgs []provider.Message) { a.history = msgs }
+
+func (a *Agent) SetChatLog(f *os.File) { a.chatLog = f }
+
+func (a *Agent) logChat(role, content string) {
+	if a.chatLog == nil {
+		return
+	}
+	fmt.Fprintf(a.chatLog, "\n--- %s ---\n%s\n", role, content)
+	a.chatLog.Sync()
+}
 
 func (a *Agent) Run(ctx context.Context) {
 	a.tui.PrintBanner()
@@ -70,7 +109,7 @@ func (a *Agent) Run(ctx context.Context) {
 			a.tui.PrintHelp()
 			continue
 		case input == "/clear":
-			a.history = a.history[:1] // keep system prompt
+			a.history = a.history[:1]
 			a.tui.Info("conversation cleared")
 			continue
 		case input == "/model":
@@ -94,7 +133,6 @@ func (a *Agent) Run(ctx context.Context) {
 				continue
 			}
 			if sw, ok := a.provider.(provider.ModelSwitcher); ok {
-				// Validate model exists
 				models, err := a.provider.ListModels(ctx)
 				if err == nil {
 					found := false
@@ -120,7 +158,12 @@ func (a *Agent) Run(ctx context.Context) {
 		}
 
 		a.history = append(a.history, provider.Message{Role: "user", Content: input})
-		a.runLoop(ctx)
+		a.logChat("USER", input)
+		a.noToolStrikes = 0
+		jobCtx, jobCancel := context.WithCancel(ctx)
+		a.tui.SetJobCancel(jobCancel)
+		a.runLoop(jobCtx)
+		a.tui.SetJobCancel(nil)
 		a.tui.ResetSigCount()
 	}
 }
@@ -130,17 +173,24 @@ func (a *Agent) Ask(ctx context.Context, prompt string) {
 	a.runLoop(ctx)
 }
 
+// Continue runs the agent loop on the existing history without appending a new message.
+func (a *Agent) Continue(ctx context.Context) {
+	a.runLoop(ctx)
+}
+
 func (a *Agent) runLoop(ctx context.Context) {
 
+	var suppressTools bool // set after text-parsed tool calls to force synthesis
 	for {
 		a.tui.StartSpinner("thinking...")
-		tools := a.toolDefs()
-		if a.noTools {
-			tools = nil
+		toolsSent := a.toolDefs()
+		if a.noTools || a.isConversational() || suppressTools {
+			toolsSent = nil
 		}
+		suppressTools = false
 		events, err := a.provider.ChatCompletion(ctx, provider.ChatRequest{
 			Messages: a.history,
-			Tools:    tools,
+			Tools:    toolsSent,
 		})
 		if err != nil {
 			a.tui.StopSpinner()
@@ -160,24 +210,35 @@ func (a *Agent) runLoop(ctx context.Context) {
 
 		text, toolCalls := a.consumeStream(events)
 
+		// If tools were intentionally not sent, ignore any text-parsed tool calls
+		if toolsSent == nil && len(toolCalls) > 0 {
+			toolCalls = nil
+		}
+
 		if ctx.Err() != nil {
+			// Log any text we got before cancellation
+			if text != "" {
+				a.logChat("ASSISTANT", text)
+			}
 			a.tui.Info("cancelled")
 			return
 		}
 
 		if text != "" {
 			a.history = append(a.history, provider.Message{Role: "assistant", Content: text})
+			a.logChat("ASSISTANT", text)
 		}
 
 		if len(toolCalls) == 0 {
 			// Track models that ignore tools — if they respond with text
 			// but never call tools, disable tools to avoid wasting tokens.
-			if !a.noTools && text != "" {
+			// Only count when tools were actually sent to the model.
+			if !a.noTools && toolsSent != nil && text != "" {
 				a.noToolStrikes++
 				if a.noToolStrikes >= 2 {
 					a.noTools = true
 					a.tui.Info(fmt.Sprintf("model %s does not appear to use tools — disabling tool calls", a.model))
-					slog.Info("auto-disabled tools: model not using them")
+					slogr.Info("auto-disabled tools: model not using them")
 				}
 			}
 			a.tui.EndStream()
@@ -185,20 +246,26 @@ func (a *Agent) runLoop(ctx context.Context) {
 		}
 		a.noToolStrikes = 0 // reset on successful tool use
 
-		// Add assistant message with tool calls
-		a.history = append(a.history, provider.Message{
-			Role:      "assistant",
-			ToolCalls: toolCalls,
-		})
+		// Execute tools concurrently
+		results := a.executeToolsConcurrently(ctx, toolCalls)
 
-		// Execute tools and add results
-		for _, tc := range toolCalls {
-			result := a.executeTool(ctx, tc)
+		// Check if these were text-parsed tool calls (IDs start with "text_call_").
+		// Models that emit tool calls as text don't understand tool-role responses,
+		// so we inject results as an assistant message summarising what was executed.
+		textParsed := len(toolCalls) > 0 && strings.HasPrefix(toolCalls[0].ID, "text_call_")
+		if textParsed {
+			var buf strings.Builder
+			for i, tc := range toolCalls {
+				buf.WriteString(fmt.Sprintf("I called %s(%s) and got:\n%s\n\n", tc.Name, string(tc.Arguments), results[i].Content))
+			}
+			a.history = append(a.history, provider.Message{Role: "assistant", Content: buf.String()})
+			suppressTools = true
+		} else {
 			a.history = append(a.history, provider.Message{
-				Role:       "tool",
-				Content:    result,
-				ToolCallID: tc.ID,
+				Role:      "assistant",
+				ToolCalls: toolCalls,
 			})
+			a.history = append(a.history, results...)
 		}
 		// Loop back to get the next response
 	}
@@ -217,12 +284,16 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		}
 		switch ev.Type {
 		case provider.EventText:
-			if !streaming {
-				a.tui.StreamToken("  ")
-				streaming = true
-			}
-			a.tui.StreamToken(ev.Text)
 			text.WriteString(ev.Text)
+			if a.noTools {
+				// No tool parsing — stream immediately
+				if !streaming {
+					a.tui.StreamToken("  ")
+					streaming = true
+				}
+				a.tui.StreamToken(ev.Text)
+			}
+			// When tools are active, buffer text to avoid showing raw JSON
 		case provider.EventToolCall:
 			if ev.ToolCall != nil {
 				toolCalls = append(toolCalls, *ev.ToolCall)
@@ -234,19 +305,29 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		}
 	}
 
-	if streaming {
-		a.tui.StreamToken("\n")
-	}
-
 	// If no native tool calls, check if the model emitted tool calls as text
-	if len(toolCalls) == 0 && text.Len() > 0 {
+	if !a.noTools && len(toolCalls) == 0 && text.Len() > 0 {
 		knownTools := make(map[string]bool, len(a.toolMap))
 		for name := range a.toolMap {
 			knownTools[name] = true
 		}
 		if parsed, remaining := parseTextToolCalls(text.String(), knownTools); len(parsed) > 0 {
+			a.textToolMode = true
+			if remaining != "" {
+				a.tui.StreamToken("  " + remaining + "\n")
+			}
 			return remaining, parsed
 		}
+	}
+
+	// Flush buffered text (when tools were active and text wasn't a tool call)
+	if !a.noTools && text.Len() > 0 {
+		a.tui.StreamToken("  " + text.String())
+		streaming = true
+	}
+
+	if streaming {
+		a.tui.StreamToken("\n")
 	}
 
 	return text.String(), toolCalls
@@ -260,22 +341,38 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 		return msg
 	}
 
-	// Check safety
+	// Check permissions
 	if !a.autoApprove && t.Safety() >= tool.NeedsConfirmation {
-		detail := string(tc.Arguments)
-		if isDangerous(t, tc) {
-			detail = tui.Red(detail)
-		}
-		prompt := fmt.Sprintf("%s wants to run: %s", tc.Name, detail)
-		if !a.tui.Confirm(prompt) {
-			msg := "denied by user"
+		perm := a.perms.Check(tc.Name)
+		if perm == PermDeny {
+			msg := "denied by policy"
 			a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
 			return msg
+		}
+		if perm == PermAsk {
+			detail := string(tc.Arguments)
+			if isDangerous(t, tc) {
+				detail = tui.Red(detail)
+			}
+			cat := CategoryName(tc.Name)
+			prompt := fmt.Sprintf("%s wants to run: %s", tc.Name, detail)
+			switch a.tui.ConfirmWithAlways(prompt, cat) {
+			case tui.ConfirmAlways:
+				a.perms.AllowCategory(tc.Name)
+				a.tui.Info(fmt.Sprintf("auto-approving all %s operations for this session", cat))
+			case tui.ConfirmYes:
+				// proceed
+			default:
+				msg := "denied by user"
+				a.tui.ToolError(tc.Name, fmt.Errorf("%s", msg))
+				return msg
+			}
 		}
 	}
 
 	// Kiro-style: show "● Read /path" or "● Shell command"
 	a.tui.ToolStart(tc.Name, summarizeArgs(tc.Arguments))
+	a.logChat("TOOL", fmt.Sprintf("%s %s", tc.Name, summarizeArgs(tc.Arguments)))
 
 	result, err := t.Execute(ctx, tc.Arguments)
 	if err != nil {
@@ -286,7 +383,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 	// Kiro-style detail line: line counts for reads, diff summary for writes
 	detail := toolDetail(tc.Name, tc.Arguments, result)
 	a.tui.ToolDone(tc.Name, detail)
-	slog.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
+	slogr.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
 	return result
 }
 
@@ -394,8 +491,62 @@ func truncate(s string, n int) string {
 	return s[:n] + "..."
 }
 
-func systemPrompt() string {
+
+// isConversational returns true if the last user message is a simple greeting
+// or question that doesn't need tool access. This prevents models like llama3.2
+// from calling tools on "hi" or "thanks".
+func (a *Agent) isConversational() bool {
+	// Find last user message
+	var lastMsg string
+	for i := len(a.history) - 1; i >= 0; i-- {
+		if a.history[i].Role == "user" {
+			lastMsg = strings.ToLower(strings.TrimSpace(a.history[i].Content))
+			break
+		}
+	}
+	if lastMsg == "" {
+		return false
+	}
+	// If conversation already has tool usage, short messages like "yes" or
+	// "do it" are likely follow-up instructions, not greetings.
+	for _, m := range a.history {
+		if m.Role == "tool" || len(m.ToolCalls) > 0 {
+			return false
+		}
+	}
+	// Short messages with no code/file indicators are likely conversational
+	words := strings.Fields(lastMsg)
+	if len(words) > 5 {
+		return false
+	}
+	// Check for tool-triggering keywords
+	for _, w := range words {
+		for _, kw := range []string{"read", "write", "list", "check", "run", "search", "find", "show",
+			"edit", "fix", "test", "build", "create", "delete", "open", "cat", "grep",
+			"file", "dir", "code", "func", "error", "bug", "implement",
+			"ls", "pwd", "cd", "git", "make", "go", "curl", "mv", "cp", "rm",
+			".go", ".js", ".py", ".ts", ".md", ".json", ".yaml", ".yml",
+			"internal", "cmd", "src", "~/", "./", "/"} {
+			if strings.Contains(w, kw) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func systemPrompt(small bool) string {
 	dir, _ := os.Getwd()
+	if small {
+		return fmt.Sprintf(`You are Forge, an AI coding assistant in the terminal.
+
+You have tools: read_file, write_file, list_directory, shell_exec, search_code.
+Only use tools when the user asks about files, code, or wants to run commands.
+For normal conversation, just respond with text.
+
+Current directory: %s
+Operating system: %s/%s`, dir, runtime.GOOS, runtime.GOARCH)
+	}
 	return fmt.Sprintf(`You are Forge, a terminal-based AI coding assistant. You help developers write, debug, and understand code directly from the command line.
 
 You are direct and concise. You write complete, working code. You explain your reasoning when making decisions.
@@ -406,7 +557,7 @@ Tool selection guide:
 - read_file: Use when asked to read, show, check, or review a specific file. Use for "read X", "show me X", "check X.go".
 - write_file: Use to create or overwrite files.
 - list_directory: Use when asked to list, check, or explore a directory. Use for "list X/", "check internal/", "what's in X".
-- shell_exec: Use ONLY for running commands (build, test, git, etc). Do NOT use shell_exec to read files — use read_file instead.
+- shell_exec: Use for running commands (build, test, git, curl, etc). Use curl to fetch URLs when asked to check websites. Do NOT use shell_exec to read local files — use read_file instead.
 - search_code: Use to find patterns across files. Use for "search for X", "find X", "where is X defined".
 
 CRITICAL: When you need to use a tool, output ONLY the JSON tool call. Do NOT describe what you plan to do — just call the tool directly.
@@ -421,7 +572,8 @@ Examples:
 - To search code: {"name": "search_code", "arguments": {"pattern": "func main", "include": "*.go"}}
 
 Rules:
-- ALWAYS use tools instead of asking the user for information.
+- Only use tools when the user's request requires file access, code search, or command execution.
+- For greetings, general questions, explanations, or conversation, respond with text — do NOT call tools.
 - NEVER explain what tool you will use. Just call it.
 - Use read_file to read files, NOT shell_exec with cat/head/tail.
 - Read code before editing it.

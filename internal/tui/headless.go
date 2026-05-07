@@ -1,6 +1,9 @@
+// headless.go implements HeadlessTUI, a non-interactive UI that captures agent output
+// as structured events for use in server/API mode.
 package tui
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -80,6 +83,8 @@ func (h *HeadlessTUI) ToolError(name string, err error) {
 
 func (h *HeadlessTUI) Confirm(_ string) bool { return true }
 
+func (h *HeadlessTUI) ConfirmWithAlways(_, _ string) ConfirmResult { return ConfirmYes }
+
 func (h *HeadlessTUI) Error(msg string) {
 	h.add(Event{Type: "error", Error: msg})
 }
@@ -87,3 +92,5 @@ func (h *HeadlessTUI) Error(msg string) {
 func (h *HeadlessTUI) Info(msg string) {
 	h.add(Event{Type: "info", Text: msg})
 }
+
+func (h *HeadlessTUI) SetJobCancel(_ context.CancelFunc) {}

@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 // Compile-time check that both TUI and HeadlessTUI satisfy UI.
 var (
@@ -57,5 +60,54 @@ func TestHeadlessConfirmAutoApproves(t *testing.T) {
 	h := NewHeadless()
 	if !h.Confirm("allow?") {
 		t.Fatal("headless Confirm should return true")
+	}
+}
+
+func TestHeadlessToolError(t *testing.T) {
+	h := NewHeadless()
+	h.ToolError("read_file", fmt.Errorf("not found"))
+	events := h.Events()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Type != "tool_error" || events[0].Tool != "read_file" || events[0].Error != "not found" {
+		t.Errorf("got %+v", events[0])
+	}
+}
+
+func TestHeadlessError(t *testing.T) {
+	h := NewHeadless()
+	h.Error("something broke")
+	events := h.Events()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Type != "error" || events[0].Error != "something broke" {
+		t.Errorf("got %+v", events[0])
+	}
+}
+
+func TestHeadlessConfirmWithAlways(t *testing.T) {
+	h := NewHeadless()
+	if h.ConfirmWithAlways("", "") != ConfirmYes {
+		t.Fatal("headless ConfirmWithAlways should return ConfirmYes")
+	}
+}
+
+func TestHeadlessSetJobCancel(t *testing.T) {
+	h := NewHeadless()
+	h.SetJobCancel(func() {})
+	h.SetJobCancel(nil)
+}
+
+func TestHeadlessInfo(t *testing.T) {
+	h := NewHeadless()
+	h.Info("test msg")
+	events := h.Events()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Type != "info" || events[0].Text != "test msg" {
+		t.Errorf("got %+v", events[0])
 	}
 }

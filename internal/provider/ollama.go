@@ -1,3 +1,5 @@
+// ollama.go implements the Ollama provider: streaming chat completions with tool
+// calling support, model listing, auto-detection, and runtime model switching.
 package provider
 
 import (
@@ -7,9 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type Ollama struct {
@@ -41,6 +44,31 @@ func NewOllama(host, model string) *Ollama {
 
 func (o *Ollama) Model() string    { return o.model }
 func (o *Ollama) SetModel(m string) { o.model = m }
+
+func (o *Ollama) ParameterSize() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	body, _ := json.Marshal(map[string]string{"name": o.model})
+	req, err := http.NewRequestWithContext(ctx, "POST", o.host+"/api/show", bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := o.client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var info struct {
+		Details struct {
+			ParameterSize string `json:"parameter_size"`
+		} `json:"details"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&info) != nil {
+		return ""
+	}
+	return info.Details.ParameterSize
+}
 
 func (o *Ollama) detectModel() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -205,7 +233,7 @@ func (o *Ollama) ChatCompletion(ctx context.Context, req ChatRequest) (<-chan Ch
 
 			var chunk ollamaStreamChunk
 			if err := json.Unmarshal(line, &chunk); err != nil {
-				slog.Warn("ollama: bad chunk", "err", err)
+				slogr.Warn("ollama: bad chunk", "err", err)
 				continue
 			}
 

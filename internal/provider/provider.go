@@ -1,3 +1,5 @@
+// Package provider defines the LLM provider interface and shared types (messages,
+// tool calls, streaming events) used across all provider implementations.
 package provider
 
 import (
@@ -14,6 +16,11 @@ type Provider interface {
 // ModelSwitcher is optionally implemented by providers that support runtime model changes.
 type ModelSwitcher interface {
 	SetModel(model string)
+}
+
+// ModelInfo is optionally implemented by providers that can report model metadata.
+type ModelInfo interface {
+	ParameterSize() string // e.g. "3.2B", "7.6B"
 }
 
 type ChatRequest struct {
