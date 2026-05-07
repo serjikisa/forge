@@ -1,3 +1,5 @@
+// Package provider defines the LLM provider interface and shared types (messages,
+// tool calls, streaming events) used across all provider implementations.
 package provider
 
 import (

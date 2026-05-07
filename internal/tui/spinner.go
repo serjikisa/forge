@@ -1,3 +1,4 @@
+// spinner.go implements an animated braille spinner shown while waiting for LLM responses.
 package tui
 
 import (

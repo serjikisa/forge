@@ -1,3 +1,6 @@
+// Package tui implements the interactive terminal UI for forge. It handles raw-mode
+// input (with Ctrl-C cancellation and Ctrl-J multiline), streaming output with inline
+// markdown rendering, spinner animations, and Kiro-style tool annotations.
 package tui
 
 import (
@@ -18,21 +21,25 @@ type stdRW struct{}
 func (stdRW) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
 func (stdRW) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 
-// ctrlCReader wraps a reader and intercepts Ctrl+C (0x03).
-// When a job is running, it cancels the job context and swallows the byte.
-// When idle, it sets a flag and replaces 0x03 with newline so x/term returns
+// ctrlCReader wraps a reader and intercepts Ctrl+C (0x03) and Ctrl+J (0x0A).
+// When a job is running, Ctrl+C cancels the job context and swallows the byte.
+// When idle, it sets a flag and replaces 0x03 with \r so x/term returns
 // an empty line instead of EOF, allowing ReadInput to show the exit hint.
+// Ctrl+J (0x0A) sets a multiline flag and replaces with \r so x/term returns
+// the current line, allowing ReadInput to accumulate multiple lines.
 type ctrlCReader struct {
 	inner  io.ReadWriter
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	ctrlC  bool // set when Ctrl+C pressed while idle
+	ctrlJ  bool // set when Ctrl+J pressed for multiline
 }
 
 func (r *ctrlCReader) Read(p []byte) (int, error) {
 	n, err := r.inner.Read(p)
 	for i := 0; i < n; i++ {
-		if p[i] == 0x03 {
+		switch p[i] {
+		case 0x03:
 			r.mu.Lock()
 			fn := r.cancel
 			r.mu.Unlock()
@@ -43,7 +50,11 @@ func (r *ctrlCReader) Read(p []byte) (int, error) {
 				r.ctrlC = true
 				r.mu.Unlock()
 			}
-			// Replace with \r so x/term returns empty line instead of EOF
+			p[i] = '\r'
+		case 0x0A:
+			r.mu.Lock()
+			r.ctrlJ = true
+			r.mu.Unlock()
 			p[i] = '\r'
 		}
 	}
@@ -63,6 +74,14 @@ func (r *ctrlCReader) consumeCtrlC() bool {
 	defer r.mu.Unlock()
 	v := r.ctrlC
 	r.ctrlC = false
+	return v
+}
+
+func (r *ctrlCReader) consumeCtrlJ() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.ctrlJ
+	r.ctrlJ = false
 	return v
 }
 
@@ -92,8 +111,15 @@ func New(provider, model string) *TUI {
 	}
 
 	r := &ctrlCReader{inner: stdRW{}}
+	terminal := term.NewTerminal(r, "")
+
+	// Set terminal width to actual size instead of default 80
+	if w, _, err := term.GetSize(int(os.Stdin.Fd())); err == nil && w > 0 {
+		terminal.SetSize(w, 0)
+	}
+
 	t := &TUI{
-		term:     term.NewTerminal(r, ""),
+		term:     terminal,
 		oldState: oldState,
 		provider: provider,
 		model:    model,
@@ -128,23 +154,29 @@ func (t *TUI) PrintBanner() {
 	}
 	fmt.Fprintln(t.term)
 	fmt.Fprintf(t.term, "  %s %s\n", BoldOrange("⚡ forge"), Dim("• "+t.provider+"/"+t.model))
-	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+D or /exit to exit FORGE"))
+	fmt.Fprintf(t.term, "  %s\n", Dim("Type / for commands, Ctrl+J for newline, Ctrl+D to exit"))
 }
 
 func (t *TUI) ReadInput() (string, bool) {
 	t.term.SetPrompt("  " + Cyan("❯") + " ")
-	line, err := t.term.ReadLine()
-	if err != nil {
-		// Only Ctrl+D (io.EOF from x/term) reaches here.
-		// Ctrl+C is converted to \r by ctrlCReader, so x/term returns empty line.
-		return "", false
+	var lines []string
+	for {
+		line, err := t.term.ReadLine()
+		if err != nil {
+			return "", false
+		}
+		if line == "" && t.reader.consumeCtrlC() {
+			fmt.Fprintf(t.term, "  %s\n", Dim("Ctrl+D or /exit to exit FORGE"))
+			return "", true
+		}
+		lines = append(lines, line)
+		if !t.reader.consumeCtrlJ() {
+			break
+		}
+		// Ctrl-J pressed — continue reading next line
+		t.term.SetPrompt("  " + Dim("…") + " ")
 	}
-	line = strings.TrimSpace(line)
-	if line == "" && t.reader.consumeCtrlC() {
-		fmt.Fprintf(t.term, "  %s\n", Dim("Ctrl+D or /exit to exit FORGE"))
-		return "", true
-	}
-	return line, true
+	return strings.TrimSpace(strings.Join(lines, "\n")), true
 }
 
 func (t *TUI) PrintHelp() {
@@ -158,11 +190,33 @@ func (t *TUI) PrintHelp() {
 	fmt.Fprintln(t.term, Dim("    /exit    — exit forge"))
 	fmt.Fprintln(t.term, Dim("    Ctrl+D   — exit"))
 	fmt.Fprintln(t.term, Dim("    Ctrl+C   — cancel running job"))
+	fmt.Fprintln(t.term, Dim("    Ctrl+J   — newline (multiline input)"))
 	fmt.Fprintln(t.term)
 }
 
 func (t *TUI) StreamToken(token string) {
-	fmt.Fprint(t.term, token)
+	fmt.Fprint(t.term, renderInlineBold(token))
+}
+
+// renderInlineBold converts **text** to ANSI bold.
+func renderInlineBold(s string) string {
+	var out strings.Builder
+	for {
+		start := strings.Index(s, "**")
+		if start == -1 {
+			out.WriteString(s)
+			break
+		}
+		end := strings.Index(s[start+2:], "**")
+		if end == -1 {
+			out.WriteString(s)
+			break
+		}
+		out.WriteString(s[:start])
+		out.WriteString(Bold(s[start+2 : start+2+end]))
+		s = s[start+2+end+2:]
+	}
+	return out.String()
 }
 
 func (t *TUI) EndStream() {

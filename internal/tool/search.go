@@ -1,3 +1,5 @@
+// search.go implements the search_code tool for regex-based code search across
+// project files with glob filtering and directory skipping.
 package tool
 
 import (

@@ -1,3 +1,5 @@
+// shell.go implements the shell_exec tool with timeout, project boundary checks,
+// and dangerous command detection.
 package tool
 
 import (

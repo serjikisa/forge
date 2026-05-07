@@ -1,3 +1,5 @@
+// ollama.go implements the Ollama provider: streaming chat completions with tool
+// calling support, model listing, auto-detection, and runtime model switching.
 package provider
 
 import (
@@ -7,9 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type Ollama struct {
@@ -230,7 +233,7 @@ func (o *Ollama) ChatCompletion(ctx context.Context, req ChatRequest) (<-chan Ch
 
 			var chunk ollamaStreamChunk
 			if err := json.Unmarshal(line, &chunk); err != nil {
-				slog.Warn("ollama: bad chunk", "err", err)
+				slogr.Warn("ollama: bad chunk", "err", err)
 				continue
 			}
 

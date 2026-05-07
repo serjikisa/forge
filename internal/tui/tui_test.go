@@ -222,3 +222,57 @@ func TestCtrlCReader_SetCancelNil(t *testing.T) {
 		t.Error("expected ctrlC flag set when idle (cancel nil)")
 	}
 }
+
+func TestRenderInlineBold(t *testing.T) {
+	orig := noColor
+	defer func() { noColor = orig }()
+	noColor = false
+
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"no bold here", "no bold here"},
+		{"**bold**", "\033[1mbold\033[0m"},
+		{"before **bold** after", "before \033[1mbold\033[0m after"},
+		{"**a** and **b**", "\033[1ma\033[0m and \033[1mb\033[0m"},
+		{"unclosed **bold", "unclosed **bold"},
+		{"empty **** markers", "empty \033[1m\033[0m markers"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := renderInlineBold(tt.input)
+		if got != tt.want {
+			t.Errorf("renderInlineBold(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestCtrlJReader_SetsFlag(t *testing.T) {
+	r := &ctrlCReader{inner: &mockRW{data: []byte{0x0A}}}
+
+	buf := make([]byte, 4)
+	n, err := r.Read(buf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if n != 1 || buf[0] != '\r' {
+		t.Errorf("expected 1 byte '\\r', got n=%d buf[0]=%x", n, buf[0])
+	}
+	if !r.consumeCtrlJ() {
+		t.Error("expected ctrlJ flag to be set")
+	}
+	if r.consumeCtrlJ() {
+		t.Error("expected ctrlJ flag consumed on second call")
+	}
+}
+
+func TestCtrlJReader_DoesNotAffectCtrlC(t *testing.T) {
+	r := &ctrlCReader{inner: &mockRW{data: []byte{0x0A}}}
+
+	buf := make([]byte, 4)
+	r.Read(buf)
+	if r.consumeCtrlC() {
+		t.Error("Ctrl-J should not set ctrlC flag")
+	}
+}

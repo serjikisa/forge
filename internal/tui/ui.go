@@ -1,3 +1,5 @@
+// ui.go defines the UI interface that the agent uses for all user interaction.
+// TUI implements it for terminal mode; HeadlessTUI implements it for server mode.
 package tui
 
 import "context"

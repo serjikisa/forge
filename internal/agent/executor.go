@@ -1,3 +1,5 @@
+// executor.go implements bounded-concurrency parallel tool execution with
+// ordered result collection.
 package agent
 
 import (

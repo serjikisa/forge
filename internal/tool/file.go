@@ -1,3 +1,5 @@
+// file.go implements the read_file, write_file, and list_directory tools for
+// filesystem access with binary detection and go.mod protection.
 package tool
 
 import (

@@ -1,3 +1,4 @@
+// color.go provides ANSI color/style helpers. Respects the NO_COLOR env var.
 package tui
 
 import (

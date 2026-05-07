@@ -1,16 +1,18 @@
+// Package server exposes forge as a REST API. It provides /v1/chat for sending
+// messages, /health for liveness checks, and / for endpoint discovery.
 package server
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/provider"
 	"github.com/serjikisa/forge/internal/tool"
 	"github.com/serjikisa/forge/internal/tui"
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type ChatRequest struct {
@@ -37,7 +39,7 @@ func New(p provider.Provider, model string) *Server {
 }
 
 func (s *Server) ListenAndServe(addr string) error {
-	slog.Info("forge server listening", "addr", addr)
+	slogr.Info("forge server listening", "addr", addr)
 	return http.ListenAndServe(addr, s.mux)
 }
 
@@ -70,7 +72,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("chat request", "message", req.Message)
+	slogr.Info("chat request", "message", req.Message)
 
 	model := s.model
 	if req.Model != "" {
@@ -80,7 +82,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			defer sw.SetModel(s.model) // restore default after request
 		}
 	}
-	slog.Info("using model", "model", model)
+	slogr.Info("using model", "model", model)
 
 	headless := tui.NewHeadless()
 	tools := tool.Registry()
@@ -92,13 +94,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	for _, e := range events {
 		switch e.Type {
 		case "text":
-			slog.Info("chat response", "type", e.Type, "text", e.Text)
+			slogr.Info("chat response", "type", e.Type, "text", e.Text)
 		case "tool_start", "tool_done":
-			slog.Info("chat response", "type", e.Type, "tool", e.Tool, "detail", e.Detail)
+			slogr.Info("chat response", "type", e.Type, "tool", e.Tool, "detail", e.Detail)
 		case "tool_error", "error":
-			slog.Warn("chat response", "type", e.Type, "error", e.Error)
+			slogr.Warn("chat response", "type", e.Type, "error", e.Error)
 		default:
-			slog.Info("chat response", "type", e.Type)
+			slogr.Info("chat response", "type", e.Type)
 		}
 	}
 

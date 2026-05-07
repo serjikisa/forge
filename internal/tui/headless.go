@@ -1,3 +1,5 @@
+// headless.go implements HeadlessTUI, a non-interactive UI that captures agent output
+// as structured events for use in server/API mode.
 package tui
 
 import (

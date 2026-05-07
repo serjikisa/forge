@@ -1,3 +1,5 @@
+// Package config loads forge configuration from ~/.forge/config.json with
+// environment variable expansion and sensible defaults.
 package config
 
 import (
@@ -50,7 +52,7 @@ func defaults() *Config {
 		DefaultProvider: "ollama",
 		Theme:           "vibrant",
 		LogLevel:        getEnv("FORGE_LOG_LEVEL", "info"),
-		LogFormat:        getEnv("FORGE_LOG_FORMAT", "text"),
+		LogFormat:        getEnv("FORGE_LOG_FORMAT", "pretty"),
 		MaxConcurrency:  5,
 		Providers: map[string]Provider{
 			"ollama": {

@@ -1,10 +1,12 @@
+// Package agent implements the core chat loop: reading user input, sending messages
+// to the LLM provider, parsing tool calls, executing tools concurrently, and streaming
+// responses back through the UI.
 package agent
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"runtime"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/serjikisa/forge/internal/provider"
 	"github.com/serjikisa/forge/internal/tool"
 	"github.com/serjikisa/forge/internal/tui"
+	"github.com/serjikisa/forge/pkg/slogr"
 )
 
 type Agent struct {
@@ -227,7 +230,7 @@ func (a *Agent) runLoop(ctx context.Context) {
 				if a.noToolStrikes >= 2 {
 					a.noTools = true
 					a.tui.Info(fmt.Sprintf("model %s does not appear to use tools — disabling tool calls", a.model))
-					slog.Info("auto-disabled tools: model not using them")
+					slogr.Info("auto-disabled tools: model not using them")
 				}
 			}
 			a.tui.EndStream()
@@ -372,7 +375,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 	// Kiro-style detail line: line counts for reads, diff summary for writes
 	detail := toolDetail(tc.Name, tc.Arguments, result)
 	a.tui.ToolDone(tc.Name, detail)
-	slog.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
+	slogr.Debug("tool executed", "tool", tc.Name, "result_len", len(result))
 	return result
 }
 

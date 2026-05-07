@@ -1,3 +1,5 @@
+// Package tool defines the Tool interface and registry, plus shared helpers for
+// project boundary enforcement and path resolution used by all tool implementations.
 package tool
 
 import (

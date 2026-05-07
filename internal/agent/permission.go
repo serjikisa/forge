@@ -1,3 +1,5 @@
+// permission.go manages per-category tool permissions (ask, allow, deny) with
+// session-level overrides for the "always allow" workflow.
 package agent
 
 import "sync"
