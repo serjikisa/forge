@@ -87,30 +87,60 @@ func (s *ShellExec) Execute(ctx context.Context, params json.RawMessage) (string
 	return result.String(), nil
 }
 
-// extractTargetPath detects if a shell command reads/writes a specific file path.
-// Returns the path if found, empty string otherwise.
+// extractTargetPath detects if a shell command reads/writes a specific file path
+// outside the project. Handles pipes, chains (&&, ||, ;), and subshells.
 func extractTargetPath(cmd string) string {
-	// Commands that read/write files by path as their last argument
+	// Split on pipes, semicolons, and logical operators to check each segment
+	segments := splitShellSegments(cmd)
+	for _, seg := range segments {
+		if p := extractPathFromSegment(seg); p != "" {
+			return p
+		}
+	}
+	// Check for redirection to absolute paths anywhere in the command
+	for _, op := range []string{"> /", ">> /"} {
+		if idx := strings.Index(cmd, op); idx >= 0 {
+			fields := strings.Fields(cmd[idx+len(op)-1:])
+			if len(fields) > 0 {
+				return fields[0]
+			}
+		}
+	}
+	return ""
+}
+
+// splitShellSegments splits a command on |, &&, ||, ; to get individual commands.
+func splitShellSegments(cmd string) []string {
+	// Replace operators with a common separator
+	for _, op := range []string{"&&", "||", "|", ";"} {
+		cmd = strings.ReplaceAll(cmd, op, "\x00")
+	}
+	// Strip subshell wrappers
+	cmd = strings.ReplaceAll(cmd, "$(", "\x00")
+	cmd = strings.ReplaceAll(cmd, "(", "\x00")
+	cmd = strings.ReplaceAll(cmd, ")", "")
+	parts := strings.Split(cmd, "\x00")
+	segments := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if s := strings.TrimSpace(p); s != "" {
+			segments = append(segments, s)
+		}
+	}
+	return segments
+}
+
+func extractPathFromSegment(seg string) string {
 	fileCommands := []string{"cat ", "head ", "tail ", "less ", "more ", "tee ", "cp ", "mv ", "nano ", "vi ", "vim "}
-	lower := strings.ToLower(strings.TrimSpace(cmd))
+	lower := strings.ToLower(strings.TrimSpace(seg))
 	for _, prefix := range fileCommands {
 		if strings.HasPrefix(lower, prefix) {
-			// Extract the last argument as the target path
-			parts := strings.Fields(cmd)
+			parts := strings.Fields(seg)
 			if len(parts) >= 2 {
 				target := parts[len(parts)-1]
-				// Only check absolute paths (relative paths are within project)
 				if strings.HasPrefix(target, "/") {
 					return target
 				}
 			}
-		}
-	}
-	// Also check for redirection to absolute paths
-	for _, op := range []string{"> /", ">> /"} {
-		if idx := strings.Index(cmd, op); idx >= 0 {
-			path := strings.Fields(cmd[idx+len(op)-1:])[0]
-			return path
 		}
 	}
 	return ""

@@ -335,8 +335,21 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 
 	// Flush buffered text (when tools were active and text wasn't a tool call)
 	if !a.noTools && text.Len() > 0 {
-		a.tui.StreamToken("  " + text.String())
-		streaming = true
+		output := text.String()
+		// Strip echoed tool call JSON from text when native calls were received
+		if len(toolCalls) > 0 {
+			knownTools := make(map[string]bool, len(a.toolMap))
+			for name := range a.toolMap {
+				knownTools[name] = true
+			}
+			if _, cleaned := parseTextToolCalls(output, knownTools); cleaned != output {
+				output = strings.TrimSpace(cleaned)
+			}
+		}
+		if output != "" {
+			a.tui.StreamToken("  " + output)
+			streaming = true
+		}
 	}
 
 	if streaming {

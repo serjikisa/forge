@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 
 	"github.com/serjikisa/forge/internal/agent"
 	"github.com/serjikisa/forge/internal/provider"
@@ -28,6 +29,7 @@ type ChatResponse struct {
 type Server struct {
 	provider provider.Provider
 	model    string
+	mu       sync.Mutex
 	mux      *http.ServeMux
 }
 
@@ -78,10 +80,17 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	model := s.model
 	if req.Model != "" {
 		if sw, ok := s.provider.(provider.ModelSwitcher); ok {
+			s.mu.Lock()
 			sw.SetModel(req.Model)
 			model = req.Model
-			defer sw.SetModel(s.model)
+			defer func() {
+				sw.SetModel(s.model)
+				s.mu.Unlock()
+			}()
 		}
+	} else {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 	}
 
 	headless := tui.NewHeadless()
