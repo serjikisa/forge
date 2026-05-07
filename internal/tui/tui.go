@@ -262,7 +262,7 @@ func (t *TUI) Separator() {
 }
 
 func (t *TUI) Confirm(prompt string) bool {
-	t.term.SetPrompt(fmt.Sprintf("  %s %s %s ", Yellow("🔒"), prompt, Dim("[y/N]")))
+	t.term.SetPrompt(fmt.Sprintf("  %s %s %s/%s ", Yellow("🔒"), prompt, Green("y"), Red("n")))
 	line, err := t.term.ReadLine()
 	if err != nil {
 		return false
@@ -272,7 +272,7 @@ func (t *TUI) Confirm(prompt string) bool {
 }
 
 func (t *TUI) ConfirmWithAlways(prompt, category string) ConfirmResult {
-	t.term.SetPrompt(fmt.Sprintf("  %s %s %s ", Yellow("🔒"), prompt, Dim("[y/n/a(lways)]")))
+	t.term.SetPrompt(fmt.Sprintf("  %s %s %s/%s/%s ", Yellow("🔒"), prompt, Green("y"), Red("n"), Cyan("always")))
 	line, err := t.term.ReadLine()
 	if err != nil {
 		t.sigCount++

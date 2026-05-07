@@ -393,7 +393,7 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 			return msg
 		}
 		if perm == PermAsk {
-			detail := string(tc.Arguments)
+			detail := summarizeArgs(tc.Arguments)
 			if isDangerous(t, tc) {
 				detail = tui.Red(detail)
 			}
@@ -643,7 +643,7 @@ Tool selection guide:
 - read_file: Use when asked to read, show, check, or review a specific file. Use for "read X", "show me X", "check X.go".
 - write_file: Use to create or overwrite files.
 - list_directory: Use when asked to list, check, or explore a directory. Use for "list X/", "check internal/", "what's in X".
-- shell_exec: Use for running commands (build, test, git, curl, etc). Use curl to fetch URLs when asked to check websites. Do NOT use shell_exec to read local files — use read_file instead.
+- shell_exec: Use for running commands (build, test, git, curl, etc). To search the web or fetch a URL, use: curl -s "https://...". Do NOT use shell_exec to read local files — use read_file instead.
 - search_code: Use to find patterns across files. Use for "search for X", "find X", "where is X defined".
 
 CRITICAL: When you need to use a tool, output ONLY the JSON tool call. Do NOT describe what you plan to do — just call the tool directly.
