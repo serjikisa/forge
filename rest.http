@@ -83,3 +83,11 @@ Content-Type: application/json
 {
   "message": "list the directory /etc"
 }
+
+### Streaming SSE — tokens arrive as server-sent events
+POST {{BASE_URL}}/v1/chat/stream
+Content-Type: application/json
+
+{
+  "message": "explain what a goroutine is in 2 sentences"
+}
