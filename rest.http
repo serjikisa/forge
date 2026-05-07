@@ -132,3 +132,49 @@ POST {{BASE_URL}}/v1/chat
 Content-Type: application/json
 
 {bad json}
+
+###############################################################################
+# Custom System Prompt — override agent identity
+###############################################################################
+
+### Change agent name via system prompt
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {"role": "system", "content": "You are Jarvis, Tony Stark's personal AI assistant. You are witty, helpful, and always address the user as Sir."},
+    {"role": "user", "content": "Who are you?"}
+  ]
+}
+
+### System prompt as code reviewer
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "messages": [
+    {"role": "system", "content": "You are a strict code reviewer. Rate code quality 1-10 and list issues."},
+    {"role": "user", "content": "read internal/tool/web_search.go and review it"}
+  ]
+}
+
+###############################################################################
+# Web Tools — web_search and web_fetch
+###############################################################################
+
+### Web search
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "search the web for Go 1.22 release notes"
+}
+
+### Web fetch
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "fetch the content of https://go.dev/doc/go1.22"
+}

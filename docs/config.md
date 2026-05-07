@@ -180,6 +180,30 @@ API keys are always read from environment variables — the `${VAR}` syntax in c
 CLI flag  >  Environment variable  >  Config file  >  Built-in default
 ```
 
+### System Prompt Precedence
+
+```
+--system-prompt / --system-prompt-file  >  model_prompts[model]  >  built-in default
+```
+
+Use `--system-prompt` for inline text or `--system-prompt-file` to load from a file:
+
+```bash
+forge chat --system-prompt "You are a security auditor. Focus on vulnerabilities."
+forge chat --system-prompt-file ./prompts/code-reviewer.md
+```
+
+For persistent per-model prompts, use `model_prompts` in config.json:
+
+```json
+{
+  "model_prompts": {
+    "llama3": "You are a senior Go developer. Prefer idiomatic Go patterns.",
+    "qwen2.5-coder:latest": "Always use tools proactively. Never ask the user to paste code."
+  }
+}
+```
+
 ## Local Storage
 
 ```

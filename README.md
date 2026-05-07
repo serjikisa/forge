@@ -49,6 +49,12 @@ forge chat --yes
 # Log prompts and responses to a file
 forge chat --log out/chat.txt
 
+# Use a custom system prompt
+forge chat --system-prompt "You are a Go expert. Always suggest idiomatic Go."
+
+# Load system prompt from a file
+forge chat --system-prompt-file ./prompts/reviewer.md
+
 # Ask a one-off question
 forge ask "explain this error" --file main.go
 
@@ -113,6 +119,8 @@ See [docs/config.md](docs/config.md) for the full reference.
 | `forge chat` | Interactive chat session (default) |
 | `forge chat --yes` | Chat with auto-approved tool calls |
 | `forge chat --log out/chat.txt` | Chat with prompt/response logging |
+| `forge chat --system-prompt "..."` | Chat with a custom system prompt |
+| `forge chat --system-prompt-file p.md` | Chat with system prompt from file |
 | `forge ask "<prompt>"` | Single-shot query |
 | `forge serve --port 8080` | Start REST API server |
 | `forge models` | List available models |

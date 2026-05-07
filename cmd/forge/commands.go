@@ -31,6 +31,9 @@ func runChat(ctx context.Context, cfg *config.Config) {
 	if prompt, ok := cfg.ModelPrompts[model]; ok {
 		a.SetSystemPrompt(prompt)
 	}
+	if sp := resolveSystemPrompt(); sp != "" {
+		a.SetSystemPrompt(sp)
+	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
@@ -84,6 +87,9 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	a := agent.New(p, tools, ui, model)
 	if prompt, ok := cfg.ModelPrompts[model]; ok {
 		a.SetSystemPrompt(prompt)
+	}
+	if sp := resolveSystemPrompt(); sp != "" {
+		a.SetSystemPrompt(sp)
 	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)

@@ -72,3 +72,19 @@ func flagValue(name string) string {
 	}
 	return ""
 }
+
+// resolveSystemPrompt returns a custom system prompt from --system-prompt or --system-prompt-file flags.
+func resolveSystemPrompt() string {
+	if sp := flagValue("--system-prompt"); sp != "" {
+		return sp
+	}
+	if path := flagValue("--system-prompt-file"); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error reading system prompt file: %v\n", err)
+			os.Exit(1)
+		}
+		return string(data)
+	}
+	return ""
+}
