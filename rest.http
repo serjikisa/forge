@@ -67,3 +67,19 @@ Content-Type: application/json
     {"role": "user", "content": "how do I start one?"}
   ]
 }
+
+### Boundary check: read outside project — expect error in events
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "read the file /etc/passwd"
+}
+
+### Boundary check: list outside project — expect error in events
+POST {{BASE_URL}}/v1/chat
+Content-Type: application/json
+
+{
+  "message": "list the directory /etc"
+}

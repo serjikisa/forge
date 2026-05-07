@@ -28,6 +28,9 @@ func (r *ReadFile) Execute(_ context.Context, params json.RawMessage) (string, e
 		return "", err
 	}
 	p.Path = expandHome(p.Path)
+	if !inProject(p.Path) {
+		return "", fmt.Errorf("path %q is outside project directory", p.Path)
+	}
 	data, err := os.ReadFile(p.Path)
 	if err != nil {
 		return "", err
@@ -98,6 +101,9 @@ func (l *ListDir) Execute(_ context.Context, params json.RawMessage) (string, er
 		p.Path = "."
 	}
 	p.Path = expandHome(p.Path)
+	if !inProject(p.Path) {
+		return "", fmt.Errorf("path %q is outside project directory", p.Path)
+	}
 
 	entries, err := os.ReadDir(p.Path)
 	if err != nil {

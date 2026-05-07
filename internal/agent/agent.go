@@ -39,16 +39,18 @@ func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent
 		tm[t.Name()] = t
 	}
 	small := isSmallModel(p)
-	return &Agent{
+	a := &Agent{
 		provider:       p,
 		tools:          tools,
 		toolMap:        tm,
 		tui:            ui,
 		history:        []provider.Message{{Role: "system", Content: systemPrompt(small)}},
 		model:          model,
+		noTools:        isNoToolModel(model),
 		maxConcurrency: 5,
 		perms:          NewPermissions(),
 	}
+	return a
 }
 
 // isSmallModel checks if the model has <= 4B parameters.
@@ -65,6 +67,17 @@ func isSmallModel(p provider.Provider) bool {
 	var n float64
 	fmt.Sscanf(strings.TrimSuffix(strings.ToUpper(size), "B"), "%f", &n)
 	return n > 0 && n <= 4
+}
+
+// isNoToolModel returns true for models known to not support tool calling.
+func isNoToolModel(model string) bool {
+	lower := strings.ToLower(model)
+	for _, pattern := range []string{"deepseek-r1", "deepseek-r2"} {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
@@ -149,7 +162,7 @@ func (a *Agent) Run(ctx context.Context) {
 				}
 				sw.SetModel(name)
 				a.model = name
-				a.noTools = false
+				a.noTools = isNoToolModel(name)
 				a.tui.Info(fmt.Sprintf("switched to %s", name))
 			} else {
 				a.tui.Error("provider does not support model switching")
@@ -373,6 +386,19 @@ func (a *Agent) executeTool(ctx context.Context, tc provider.ToolCall) string {
 	// Kiro-style: show "● Read /path" or "● Shell command"
 	a.tui.ToolStart(tc.Name, summarizeArgs(tc.Arguments))
 	a.logChat("TOOL", fmt.Sprintf("%s %s", tc.Name, summarizeArgs(tc.Arguments)))
+
+	// Guard against malformed or empty arguments
+	args := strings.TrimSpace(string(tc.Arguments))
+	if args == "" || args == "null" {
+		msg := fmt.Sprintf("error: %s called with empty arguments — provide valid JSON parameters", tc.Name)
+		a.tui.ToolError(tc.Name, fmt.Errorf("empty arguments"))
+		return msg
+	}
+	if !json.Valid(tc.Arguments) {
+		msg := fmt.Sprintf("error: %s called with malformed JSON — check argument syntax", tc.Name)
+		a.tui.ToolError(tc.Name, fmt.Errorf("malformed JSON arguments"))
+		return msg
+	}
 
 	result, err := t.Execute(ctx, tc.Arguments)
 	if err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -139,5 +140,30 @@ func TestExecuteToolsConcurrently_PanicRecovery(t *testing.T) {
 	// First should be an error (unknown tool)
 	if results[0].Content != "unknown tool: unknown" {
 		t.Errorf("results[0] = %q", results[0].Content)
+	}
+}
+
+func TestExecuteTool_MalformedArguments(t *testing.T) {
+	tools := []tool.Tool{&stubTool{name: "read_file"}}
+	a := newTestAgent(tools, 5)
+
+	tests := []struct {
+		name string
+		args string
+		want string
+	}{
+		{"empty args", "", "empty arguments"},
+		{"null args", "null", "empty arguments"},
+		{"invalid JSON", `{"path": `, "malformed JSON"},
+		{"truncated", `{"pat`, "malformed JSON"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := provider.ToolCall{ID: "1", Name: "read_file", Arguments: json.RawMessage(tt.args)}
+			result := a.executeTool(context.Background(), tc)
+			if !strings.Contains(result, tt.want) {
+				t.Errorf("got %q, want it to contain %q", result, tt.want)
+			}
+		})
 	}
 }
