@@ -10,12 +10,13 @@ import (
 )
 
 type Config struct {
-	DefaultProvider string            `json:"default_provider"`
-	Theme           string            `json:"theme"`
-	LogLevel        string            `json:"log_level"`
-	LogFormat       string            `json:"log_format"`
-	MaxConcurrency  int               `json:"max_concurrency"`
+	DefaultProvider string              `json:"default_provider"`
+	Theme           string              `json:"theme"`
+	LogLevel        string              `json:"log_level"`
+	LogFormat       string              `json:"log_format"`
+	MaxConcurrency  int                 `json:"max_concurrency"`
 	Providers       map[string]Provider `json:"providers"`
+	ModelPrompts    map[string]string   `json:"model_prompts,omitempty"`
 }
 
 type Provider struct {

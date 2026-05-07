@@ -26,11 +26,13 @@ type Agent struct {
 	model    string
 	noTools        bool
 	noToolStrikes  int
-	textToolMode   bool // model emits tool calls as text, not native
+	textToolMode   bool
 	autoApprove    bool
 	maxConcurrency int
 	perms          *Permissions
 	chatLog        *os.File
+	promptTokens   int
+	outputTokens   int
 }
 
 func New(p provider.Provider, tools []tool.Tool, ui tui.UI, model string) *Agent {
@@ -81,6 +83,13 @@ func isNoToolModel(model string) bool {
 }
 
 func (a *Agent) SetAutoApprove(v bool) { a.autoApprove = v }
+
+// SetSystemPrompt replaces the system prompt (first message in history).
+func (a *Agent) SetSystemPrompt(prompt string) {
+	if len(a.history) > 0 && a.history[0].Role == "system" {
+		a.history[0].Content = prompt
+	}
+}
 
 // SetHistory replaces the conversation history (including system prompt).
 func (a *Agent) SetHistory(msgs []provider.Message) { a.history = msgs }
@@ -201,6 +210,7 @@ func (a *Agent) runLoop(ctx context.Context) {
 			toolsSent = nil
 		}
 		suppressTools = false
+		a.compactHistory()
 		events, err := a.provider.ChatCompletion(ctx, provider.ChatRequest{
 			Messages: a.history,
 			Tools:    toolsSent,
@@ -255,6 +265,10 @@ func (a *Agent) runLoop(ctx context.Context) {
 				}
 			}
 			a.tui.EndStream()
+			if a.promptTokens > 0 || a.outputTokens > 0 {
+				a.tui.Info(fmt.Sprintf("tokens: %d prompt + %d output = %d total",
+					a.promptTokens, a.outputTokens, a.promptTokens+a.outputTokens))
+			}
 			return
 		}
 		a.noToolStrikes = 0 // reset on successful tool use
@@ -314,7 +328,10 @@ func (a *Agent) consumeStream(events <-chan provider.ChatEvent) (string, []provi
 		case provider.EventError:
 			a.tui.Error(ev.Error.Error())
 		case provider.EventDone:
-			// done
+			if ev.Usage != nil {
+				a.promptTokens += ev.Usage.PromptTokens
+				a.outputTokens += ev.Usage.OutputTokens
+			}
 		}
 	}
 
@@ -572,6 +589,36 @@ func (a *Agent) isConversational() bool {
 		}
 	}
 	return true
+}
+// compactHistory drops older messages when history exceeds the token budget.
+// Keeps the system prompt (first message) and the most recent messages.
+const maxHistoryTokens = 6000 // ~75% of 8k context, leaves room for response
+
+func (a *Agent) compactHistory() {
+	if len(a.history) <= 3 {
+		return
+	}
+	total := 0
+	for _, m := range a.history {
+		total += len(m.Content)/4 + 1
+	}
+	if total <= maxHistoryTokens {
+		return
+	}
+	// Keep system prompt + most recent messages that fit in budget
+	budget := maxHistoryTokens - len(a.history[0].Content)/4
+	start := len(a.history)
+	for i := len(a.history) - 1; i >= 1; i-- {
+		budget -= len(a.history[i].Content)/4 + 1
+		if budget < 0 {
+			break
+		}
+		start = i
+	}
+	if start > 1 {
+		a.history = append(a.history[:1], a.history[start:]...)
+		a.tui.Info("compacted conversation history")
+	}
 }
 
 func systemPrompt(small bool) string {

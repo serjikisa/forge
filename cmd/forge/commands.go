@@ -26,6 +26,9 @@ func runChat(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if prompt, ok := cfg.ModelPrompts[model]; ok {
+		a.SetSystemPrompt(prompt)
+	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
@@ -77,6 +80,9 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	ui := tui.New(prov, model)
 	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
+	if prompt, ok := cfg.ModelPrompts[model]; ok {
+		a.SetSystemPrompt(prompt)
+	}
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
