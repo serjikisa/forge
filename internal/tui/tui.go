@@ -39,7 +39,7 @@ func (r *ctrlCReader) Read(p []byte) (int, error) {
 	n, err := r.inner.Read(p)
 	for i := 0; i < n; i++ {
 		switch p[i] {
-		case 0x03:
+		case 0x03: // Ctrl-C
 			r.mu.Lock()
 			fn := r.cancel
 			r.mu.Unlock()
@@ -51,6 +51,14 @@ func (r *ctrlCReader) Read(p []byte) (int, error) {
 				r.mu.Unlock()
 			}
 			p[i] = '\r'
+		case 0x1B: // ESC
+			r.mu.Lock()
+			fn := r.cancel
+			r.mu.Unlock()
+			if fn != nil {
+				fn()
+				p[i] = '\r'
+			}
 		case 0x0A:
 			r.mu.Lock()
 			r.ctrlJ = true
@@ -101,6 +109,8 @@ type TUI struct {
 	model    string
 	sigCount int
 	reader   *ctrlCReader
+	jobMu    sync.Mutex
+	jobStop  chan struct{}
 	spinnerFields
 }
 
@@ -130,8 +140,42 @@ func New(provider, model string) *TUI {
 
 // SetJobCancel sets the cancel function for the currently running job.
 // Pass nil when no job is running.
+// When a job starts, a background goroutine reads stdin to intercept Ctrl-C/ESC.
 func (t *TUI) SetJobCancel(fn context.CancelFunc) {
+	t.jobMu.Lock()
+	defer t.jobMu.Unlock()
 	t.reader.setCancel(fn)
+	if fn != nil {
+		// Start background stdin reader to intercept cancel keys
+		t.jobStop = make(chan struct{})
+		go t.readCancelKeys(fn, t.jobStop)
+	} else {
+		// Stop background reader
+		if t.jobStop != nil {
+			close(t.jobStop)
+			t.jobStop = nil
+		}
+	}
+}
+
+// readCancelKeys reads directly from stdin during job execution to detect Ctrl-C/ESC.
+func (t *TUI) readCancelKeys(cancel context.CancelFunc, stop <-chan struct{}) {
+	buf := make([]byte, 1)
+	for {
+		select {
+		case <-stop:
+			return
+		default:
+		}
+		n, err := os.Stdin.Read(buf)
+		if err != nil || n == 0 {
+			return
+		}
+		if buf[0] == 0x03 || buf[0] == 0x1B { // Ctrl-C or ESC
+			cancel()
+			return
+		}
+	}
 }
 
 func (t *TUI) Restore() {

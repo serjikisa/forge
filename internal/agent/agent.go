@@ -204,7 +204,7 @@ func (a *Agent) runLoop(ctx context.Context) {
 
 	var suppressTools bool // set after text-parsed tool calls to force synthesis
 	for {
-		a.tui.StartSpinner("thinking...")
+		a.tui.StartSpinner("thinking... (press ESC or Ctrl-C to stop)")
 		toolsSent := a.toolDefs()
 		if a.noTools || a.isConversational() || suppressTools {
 			toolsSent = nil
