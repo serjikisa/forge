@@ -15,11 +15,55 @@ import (
 	"golang.org/x/term"
 )
 
-// stdRW reads from stdin, writes to stdout.
-type stdRW struct{}
+// stdinPump reads from os.Stdin in a dedicated goroutine and writes to a pipe.
+// It also intercepts Ctrl-C/ESC for job cancellation, eliminating the need for
+// a separate drain goroutine.
+type stdinPump struct {
+	pr     *io.PipeReader
+	pw     *io.PipeWriter
+	mu     sync.Mutex
+	cancel context.CancelFunc
+}
 
-func (stdRW) Read(p []byte) (int, error)  { return os.Stdin.Read(p) }
-func (stdRW) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
+func newStdinPump() *stdinPump {
+	pr, pw := io.Pipe()
+	s := &stdinPump{pr: pr, pw: pw}
+	go s.run()
+	return s
+}
+
+func (s *stdinPump) run() {
+	buf := make([]byte, 256)
+	for {
+		n, err := os.Stdin.Read(buf)
+		for i := 0; i < n; i++ {
+			b := buf[i]
+			if b == 0x03 || b == 0x1B { // Ctrl-C or ESC
+				s.mu.Lock()
+				fn := s.cancel
+				s.mu.Unlock()
+				if fn != nil {
+					fn()
+					continue // don't write cancel bytes to pipe
+				}
+			}
+			s.pw.Write([]byte{b})
+		}
+		if err != nil {
+			s.pw.CloseWithError(err)
+			return
+		}
+	}
+}
+
+func (s *stdinPump) setCancel(fn context.CancelFunc) {
+	s.mu.Lock()
+	s.cancel = fn
+	s.mu.Unlock()
+}
+
+func (s *stdinPump) Read(p []byte) (int, error)  { return s.pr.Read(p) }
+func (s *stdinPump) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 
 // ctrlCReader wraps a reader and intercepts Ctrl+C (0x03) and Ctrl+J (0x0A).
 // When a job is running, Ctrl+C cancels the job context and swallows the byte.
@@ -28,14 +72,25 @@ func (stdRW) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 // Ctrl+J (0x0A) sets a multiline flag and replaces with \r so x/term returns
 // the current line, allowing ReadInput to accumulate multiple lines.
 type ctrlCReader struct {
-	inner  io.ReadWriter
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	ctrlC  bool // set when Ctrl+C pressed while idle
-	ctrlJ  bool // set when Ctrl+J pressed for multiline
+	inner    io.ReadWriter
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	ctrlC    bool // set when Ctrl+C pressed while idle
+	ctrlJ    bool // set when Ctrl+J pressed for multiline
+	pushback []byte
 }
 
 func (r *ctrlCReader) Read(p []byte) (int, error) {
+	// Return any pushed-back bytes first
+	r.mu.Lock()
+	if len(r.pushback) > 0 {
+		n := copy(p, r.pushback)
+		r.pushback = r.pushback[n:]
+		r.mu.Unlock()
+		return n, nil
+	}
+	r.mu.Unlock()
+
 	n, err := r.inner.Read(p)
 	for i := 0; i < n; i++ {
 		switch p[i] {
@@ -97,9 +152,11 @@ func (r *ctrlCReader) consumeCtrlJ() bool {
 var toolVerbs = map[string]string{
 	"read_file":      "Read",
 	"write_file":     "Write",
-	"list_directory":  "Read",
+	"list_directory": "Read",
 	"shell_exec":     "Shell",
 	"search_code":    "Search",
+	"web_search":     "Search",
+	"web_fetch":      "Fetch",
 }
 
 type TUI struct {
@@ -109,8 +166,6 @@ type TUI struct {
 	model    string
 	sigCount int
 	reader   *ctrlCReader
-	jobMu    sync.Mutex
-	jobStop  chan struct{}
 	spinnerFields
 }
 
@@ -120,7 +175,7 @@ func New(provider, model string) *TUI {
 		oldState = nil
 	}
 
-	r := &ctrlCReader{inner: stdRW{}}
+	r := &ctrlCReader{inner: newStdinPump()}
 	terminal := term.NewTerminal(r, "")
 
 	// Set terminal width to actual size instead of default 80
@@ -139,43 +194,10 @@ func New(provider, model string) *TUI {
 }
 
 // SetJobCancel sets the cancel function for the currently running job.
-// Pass nil when no job is running.
-// When a job starts, a background goroutine reads stdin to intercept Ctrl-C/ESC.
+// Cancel detection happens in the stdinPump goroutine — no separate drain needed.
 func (t *TUI) SetJobCancel(fn context.CancelFunc) {
-	t.jobMu.Lock()
-	defer t.jobMu.Unlock()
 	t.reader.setCancel(fn)
-	if fn != nil {
-		// Start background stdin reader to intercept cancel keys
-		t.jobStop = make(chan struct{})
-		go t.readCancelKeys(fn, t.jobStop)
-	} else {
-		// Stop background reader
-		if t.jobStop != nil {
-			close(t.jobStop)
-			t.jobStop = nil
-		}
-	}
-}
-
-// readCancelKeys reads directly from stdin during job execution to detect Ctrl-C/ESC.
-func (t *TUI) readCancelKeys(cancel context.CancelFunc, stop <-chan struct{}) {
-	buf := make([]byte, 1)
-	for {
-		select {
-		case <-stop:
-			return
-		default:
-		}
-		n, err := os.Stdin.Read(buf)
-		if err != nil || n == 0 {
-			return
-		}
-		if buf[0] == 0x03 || buf[0] == 0x1B { // Ctrl-C or ESC
-			cancel()
-			return
-		}
-	}
+	t.reader.inner.(*stdinPump).setCancel(fn)
 }
 
 func (t *TUI) Restore() {
@@ -305,9 +327,19 @@ func (t *TUI) Separator() {
 	fmt.Fprintf(t.term, "%s\n", Dim(strings.Repeat("─", 80)))
 }
 
+// promptWithPause reads a line of input for confirmation prompts.
+func (t *TUI) promptWithPause() (string, error) {
+	// Discard any bytes in pushback — they weren't in response to this prompt
+	t.reader.mu.Lock()
+	t.reader.pushback = nil
+	t.reader.mu.Unlock()
+
+	return t.term.ReadLine()
+}
+
 func (t *TUI) Confirm(prompt string) bool {
 	t.term.SetPrompt(fmt.Sprintf("  %s %s %s/%s ", Yellow("🔒"), prompt, Green("y"), Red("n")))
-	line, err := t.term.ReadLine()
+	line, err := t.promptWithPause()
 	if err != nil {
 		return false
 	}
@@ -317,7 +349,7 @@ func (t *TUI) Confirm(prompt string) bool {
 
 func (t *TUI) ConfirmWithAlways(prompt, category string) ConfirmResult {
 	t.term.SetPrompt(fmt.Sprintf("  %s %s %s/%s/%s ", Yellow("🔒"), prompt, Green("y"), Red("n"), Cyan("always")))
-	line, err := t.term.ReadLine()
+	line, err := t.promptWithPause()
 	if err != nil {
 		t.sigCount++
 		return ConfirmNo

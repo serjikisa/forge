@@ -13,23 +13,33 @@ import (
 
 // textToolCall is the JSON shape models emit as text when they don't use native tool calling.
 type textToolCall struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	Name       string          `json:"name"`
+	Arguments  json.RawMessage `json:"arguments"`
+	Parameters json.RawMessage `json:"parameters"`
+}
+
+// args returns Arguments if set, otherwise falls back to Parameters.
+func (tc textToolCall) args() json.RawMessage {
+	if len(tc.Arguments) > 0 {
+		return tc.Arguments
+	}
+	return tc.Parameters
 }
 
 // parseTextToolCalls extracts tool calls from text that models output as JSON
 // instead of structured tool_calls. Handles JSON embedded in prose or code fences.
-func parseTextToolCalls(text string, knownTools map[string]bool) ([]provider.ToolCall, string) {
+// toolNames maps possible names (exact name, lowercased description) to canonical tool name.
+func parseTextToolCalls(text string, toolNames map[string]string) ([]provider.ToolCall, string) {
 	// Extract from markdown code fences first
-	if calls, remaining := extractFromFences(text, knownTools); len(calls) > 0 {
+	if calls, remaining := extractFromFences(text, toolNames); len(calls) > 0 {
 		return calls, remaining
 	}
 
 	// Scan for bare JSON objects containing known tool names
-	return extractBareJSON(text, knownTools)
+	return extractBareJSON(text, toolNames)
 }
 
-func extractFromFences(text string, knownTools map[string]bool) ([]provider.ToolCall, string) {
+func extractFromFences(text string, toolNames map[string]string) ([]provider.ToolCall, string) {
 	remaining := text
 	var calls []provider.ToolCall
 
@@ -52,7 +62,7 @@ func extractFromFences(text string, knownTools map[string]bool) ([]provider.Tool
 		end += bodyStart
 
 		block := strings.TrimSpace(remaining[bodyStart:end])
-		if parsed := tryParseToolCalls(block, knownTools); len(parsed) > 0 {
+		if parsed := tryParseToolCalls(block, toolNames); len(parsed) > 0 {
 			calls = append(calls, parsed...)
 			// Remove the fence from remaining text
 			before := strings.TrimSpace(remaining[:start])
@@ -67,7 +77,7 @@ func extractFromFences(text string, knownTools map[string]bool) ([]provider.Tool
 	return calls, strings.TrimSpace(remaining)
 }
 
-func extractBareJSON(text string, knownTools map[string]bool) ([]provider.ToolCall, string) {
+func extractBareJSON(text string, toolNames map[string]string) ([]provider.ToolCall, string) {
 	remaining := text
 	var calls []provider.ToolCall
 
@@ -85,7 +95,7 @@ func extractBareJSON(text string, knownTools map[string]bool) ([]provider.ToolCa
 				depth--
 				if depth == 0 {
 					candidate := remaining[i : j+1]
-					if parsed := tryParseToolCalls(candidate, knownTools); len(parsed) > 0 {
+					if parsed := tryParseToolCalls(candidate, toolNames); len(parsed) > 0 {
 						calls = append(calls, parsed...)
 						before := strings.TrimSpace(remaining[:i])
 						after := strings.TrimSpace(remaining[j+1:])
@@ -102,15 +112,17 @@ func extractBareJSON(text string, knownTools map[string]bool) ([]provider.ToolCa
 	return calls, strings.TrimSpace(remaining)
 }
 
-func tryParseToolCalls(s string, knownTools map[string]bool) []provider.ToolCall {
+func tryParseToolCalls(s string, toolNames map[string]string) []provider.ToolCall {
 	// Single object
 	var tc textToolCall
-	if json.Unmarshal([]byte(s), &tc) == nil && tc.Name != "" && knownTools[tc.Name] {
-		return []provider.ToolCall{{
-			ID:        fmt.Sprintf("text_call_0"),
-			Name:      tc.Name,
-			Arguments: tc.Arguments,
-		}}
+	if json.Unmarshal([]byte(s), &tc) == nil && tc.Name != "" {
+		if canonical := resolveTool(tc.Name, toolNames); canonical != "" {
+			return []provider.ToolCall{{
+				ID:        fmt.Sprintf("text_call_0"),
+				Name:      canonical,
+				Arguments: tc.args(),
+			}}
+		}
 	}
 
 	// Array
@@ -118,16 +130,29 @@ func tryParseToolCalls(s string, knownTools map[string]bool) []provider.ToolCall
 	if json.Unmarshal([]byte(s), &tcs) == nil && len(tcs) > 0 {
 		var calls []provider.ToolCall
 		for i, t := range tcs {
-			if t.Name != "" && knownTools[t.Name] {
-				calls = append(calls, provider.ToolCall{
-					ID:        fmt.Sprintf("text_call_%d", i),
-					Name:      t.Name,
-					Arguments: t.Arguments,
-				})
+			if t.Name != "" {
+				if canonical := resolveTool(t.Name, toolNames); canonical != "" {
+					calls = append(calls, provider.ToolCall{
+						ID:        fmt.Sprintf("text_call_%d", i),
+						Name:      canonical,
+						Arguments: t.args(),
+					})
+				}
 			}
 		}
 		return calls
 	}
 
 	return nil
+}
+
+// resolveTool looks up a name in the toolNames map (exact match or lowercased).
+func resolveTool(name string, toolNames map[string]string) string {
+	if c, ok := toolNames[name]; ok {
+		return c
+	}
+	if c, ok := toolNames[strings.ToLower(name)]; ok {
+		return c
+	}
+	return ""
 }

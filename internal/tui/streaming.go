@@ -2,15 +2,11 @@
 // in real-time for use with SSE endpoints.
 package tui
 
-import (
-	"context"
-	"strings"
-)
+import "context"
 
 // StreamingTUI sends events to a channel as they occur.
 type StreamingTUI struct {
-	ch   chan Event
-	text strings.Builder
+	ch chan Event
 }
 
 func NewStreaming() (*StreamingTUI, <-chan Event) {
@@ -18,17 +14,7 @@ func NewStreaming() (*StreamingTUI, <-chan Event) {
 	return &StreamingTUI{ch: ch}, ch
 }
 
-func (s *StreamingTUI) Close() {
-	s.flush()
-	close(s.ch)
-}
-
-func (s *StreamingTUI) flush() {
-	if s.text.Len() > 0 {
-		s.ch <- Event{Type: "text", Text: strings.TrimSpace(s.text.String())}
-		s.text.Reset()
-	}
-}
+func (s *StreamingTUI) Close() { close(s.ch) }
 
 func (s *StreamingTUI) PrintBanner()         {}
 func (s *StreamingTUI) ReadInput() (string, bool) { return "", false }
@@ -43,12 +29,10 @@ func (s *StreamingTUI) StreamToken(token string) {
 }
 
 func (s *StreamingTUI) EndStream() {
-	s.flush()
 	s.ch <- Event{Type: "done"}
 }
 
 func (s *StreamingTUI) ToolStart(name, detail string) {
-	s.flush()
 	s.ch <- Event{Type: "tool_start", Tool: name, Detail: detail}
 }
 

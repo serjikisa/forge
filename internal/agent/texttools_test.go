@@ -4,10 +4,10 @@ import (
 	"testing"
 )
 
-var testTools = map[string]bool{
-	"shell_exec":     true,
-	"read_file":      true,
-	"list_directory": true,
+var testTools = map[string]string{
+	"shell_exec":     "shell_exec",
+	"read_file":      "read_file",
+	"list_directory": "list_directory",
 }
 
 func TestParseTextToolCalls_SingleJSON(t *testing.T) {
@@ -154,5 +154,27 @@ Please execute this command and share the output so I can proceed with the next 
 	}
 	if calls[0].Name != "list_directory" {
 		t.Errorf("name = %q", calls[0].Name)
+	}
+}
+
+func TestParseTextToolCalls_DescriptionAsName(t *testing.T) {
+	// llama3.2 emits the tool description as the name and "parameters" instead of "arguments"
+	tools := map[string]string{
+		"web_search":                                        "web_search",
+		"search the web using duckduckgo and return results": "web_search",
+	}
+	text := `{"name": "Search the web using DuckDuckGo and return results", "parameters": {"query": "golang 1.23 release notes"}}`
+	calls, remaining := parseTextToolCalls(text, tools)
+	if len(calls) != 1 {
+		t.Fatalf("got %d calls, want 1", len(calls))
+	}
+	if calls[0].Name != "web_search" {
+		t.Errorf("name = %q, want web_search", calls[0].Name)
+	}
+	if string(calls[0].Arguments) != `{"query": "golang 1.23 release notes"}` {
+		t.Errorf("arguments = %s", calls[0].Arguments)
+	}
+	if remaining != "" {
+		t.Errorf("remaining = %q, want empty", remaining)
 	}
 }

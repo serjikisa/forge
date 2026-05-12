@@ -31,6 +31,7 @@ func TestExpandHome(t *testing.T) {
 }
 
 func TestInProject(t *testing.T) {
+	ResetProjectDir()
 	t.Run("relative path inside project", func(t *testing.T) {
 		if !inProject("tool.go") {
 			t.Error("expected tool.go to be in project")
@@ -68,6 +69,7 @@ func TestInProject(t *testing.T) {
 }
 
 func TestProjectDir(t *testing.T) {
+	ResetProjectDir()
 	dir := ProjectDir()
 	if dir == "" {
 		t.Fatal("ProjectDir() returned empty string")

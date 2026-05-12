@@ -89,8 +89,10 @@ func (o *Ollama) Name() string { return "ollama" }
 
 type ollamaTagsResp struct {
 	Models []struct {
-		Name    string `json:"name"`
-		Details struct {
+		Name       string `json:"name"`
+		Size       int64  `json:"size"`
+		ModifiedAt string `json:"modified_at"`
+		Details    struct {
 			ParameterSize string `json:"parameter_size"`
 		} `json:"details"`
 	} `json:"models"`
@@ -115,7 +117,7 @@ func (o *Ollama) ListModels(ctx context.Context) ([]Model, error) {
 
 	models := make([]Model, len(tags.Models))
 	for i, m := range tags.Models {
-		models[i] = Model{ID: m.Name, Name: m.Name}
+		models[i] = Model{ID: m.Name, Name: m.Name, Size: m.Size, ModifiedAt: m.ModifiedAt}
 	}
 	return models, nil
 }

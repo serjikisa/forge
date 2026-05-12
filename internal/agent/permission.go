@@ -20,15 +20,18 @@ const (
 	CatFileRead  Category = "file_read"
 	CatFileWrite Category = "file_write"
 	CatShell     Category = "shell"
+	CatWeb       Category = "web"
 )
 
 // toolCategory maps tool names to permission categories.
 var toolCategory = map[string]Category{
 	"read_file":      CatFileRead,
-	"list_directory":  CatFileRead,
+	"list_directory": CatFileRead,
 	"search_code":    CatFileRead,
 	"write_file":     CatFileWrite,
 	"shell_exec":     CatShell,
+	"web_search":     CatWeb,
+	"web_fetch":      CatWeb,
 }
 
 // Permissions tracks per-category permission state with session overrides.
@@ -44,6 +47,7 @@ func NewPermissions() *Permissions {
 			CatFileRead:  PermAllow,
 			CatFileWrite: PermAsk,
 			CatShell:     PermAsk,
+			CatWeb:       PermAsk,
 		},
 		session: make(map[Category]Permission),
 	}

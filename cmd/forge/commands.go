@@ -19,24 +19,8 @@ import (
 )
 
 func runChat(ctx context.Context, cfg *config.Config) {
-	prov, model := resolveProviderModel(cfg)
-	p := newProvider(cfg, prov, model)
-	if o, ok := p.(*provider.Ollama); ok && model == "" {
-		model = o.Model()
-	}
-	tools := tool.Registry()
-	ui := tui.New(prov, model)
+	a, ui := setupAgent(cfg)
 	defer ui.Restore()
-	a := agent.New(p, tools, ui, model)
-	if prompt, ok := cfg.ModelPrompts[model]; ok {
-		a.SetSystemPrompt(prompt)
-	}
-	if sp := resolveSystemPrompt(); sp != "" {
-		a.SetSystemPrompt(sp)
-	}
-	if hasFlag("--yes", "-y") {
-		a.SetAutoApprove(true)
-	}
 	if logPath := flagValue("--log"); logPath != "" {
 		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "error creating log dir: %v\n", err)
@@ -76,6 +60,13 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 		prompt = fmt.Sprintf("%s\n\n---\nFile: %s\n```\n%s\n```", prompt, *file, string(data))
 	}
 
+	a, ui := setupAgent(cfg)
+	defer ui.Restore()
+	a.Ask(ctx, prompt)
+}
+
+// setupAgent creates a fully configured agent with provider, tools, and TUI.
+func setupAgent(cfg *config.Config) (*agent.Agent, *tui.TUI) {
 	prov, model := resolveProviderModel(cfg)
 	p := newProvider(cfg, prov, model)
 	if o, ok := p.(*provider.Ollama); ok && model == "" {
@@ -83,7 +74,6 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	}
 	tools := tool.Registry()
 	ui := tui.New(prov, model)
-	defer ui.Restore()
 	a := agent.New(p, tools, ui, model)
 	if prompt, ok := cfg.ModelPrompts[model]; ok {
 		a.SetSystemPrompt(prompt)
@@ -94,7 +84,7 @@ func runAsk(ctx context.Context, cfg *config.Config) {
 	if hasFlag("--yes", "-y") {
 		a.SetAutoApprove(true)
 	}
-	a.Ask(ctx, prompt)
+	return a, ui
 }
 
 func runServe(_ context.Context, cfg *config.Config) {

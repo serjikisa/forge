@@ -47,12 +47,6 @@ type ToolCall struct {
 	Arguments json.RawMessage `json:"arguments"`
 }
 
-type ToolResult struct {
-	ToolCallID string
-	Content    string
-	Error      error
-}
-
 type EventType int
 
 const (
@@ -80,4 +74,6 @@ type Model struct {
 	ID          string
 	Name        string
 	ContextSize int
+	Size        int64
+	ModifiedAt  string
 }

@@ -17,7 +17,11 @@ var version = "dev"
 func main() {
 	signal.Ignore(os.Interrupt)
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 	slogr.Setup(cfg.LogLevel, cfg.LogFormat)
 
 	ctx, stop := context.WithCancel(context.Background())

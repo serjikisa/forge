@@ -87,6 +87,7 @@ func chdir(t *testing.T, dir string) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatal(err)
 	}
+	ResetProjectDir()
 }
 
 func writeFile(t *testing.T, path, content string) {

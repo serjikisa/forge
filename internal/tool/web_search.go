@@ -11,22 +11,21 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type WebSearch struct{}
 
 func (w *WebSearch) Name() string        { return "web_search" }
 func (w *WebSearch) Description() string { return "Search the web using DuckDuckGo and return results" }
-func (w *WebSearch) Safety() SafetyLevel { return Safe }
+func (w *WebSearch) Safety() SafetyLevel { return NeedsConfirmation }
 func (w *WebSearch) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"search query"},"num_results":{"type":"integer","description":"max results to return (default 5)"}},"required":["query"]}`)
 }
 
 func (w *WebSearch) Execute(ctx context.Context, params json.RawMessage) (string, error) {
 	var p struct {
-		Query      string `json:"query"`
-		NumResults int    `json:"num_results"`
+		Query      string          `json:"query"`
+		NumResults flexInt         `json:"num_results"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", err
@@ -40,14 +39,13 @@ func (w *WebSearch) Execute(ctx context.Context, params json.RawMessage) (string
 
 	searchURL := "https://html.duckduckgo.com/html/?q=" + url.QueryEscape(p.Query)
 
-	client := &http.Client{Timeout: 15 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Forge/1.0)")
 
-	resp, err := client.Do(req)
+	resp, err := sharedClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("search request failed: %w", err)
 	}
@@ -58,7 +56,7 @@ func (w *WebSearch) Execute(ctx context.Context, params json.RawMessage) (string
 		return "", fmt.Errorf("reading response: %w", err)
 	}
 
-	results := parseDDGResults(string(body), p.NumResults)
+	results := parseDDGResults(string(body), int(p.NumResults))
 	if len(results) == 0 {
 		return "No results found for: " + p.Query, nil
 	}
@@ -118,11 +116,5 @@ var tagRe = regexp.MustCompile(`<[^>]*>`)
 
 func stripTags(s string) string {
 	s = tagRe.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&quot;", `"`)
-	s = strings.ReplaceAll(s, "&#x27;", "'")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	return strings.TrimSpace(s)
+	return strings.TrimSpace(decodeHTMLEntities(s))
 }

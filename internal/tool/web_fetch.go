@@ -9,22 +9,21 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type WebFetch struct{}
 
 func (w *WebFetch) Name() string        { return "web_fetch" }
 func (w *WebFetch) Description() string { return "Fetch a URL and return its text content" }
-func (w *WebFetch) Safety() SafetyLevel { return Safe }
+func (w *WebFetch) Safety() SafetyLevel { return NeedsConfirmation }
 func (w *WebFetch) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"url":{"type":"string","description":"URL to fetch"},"max_length":{"type":"integer","description":"max chars to return (default 8000)"}},"required":["url"]}`)
 }
 
 func (w *WebFetch) Execute(ctx context.Context, params json.RawMessage) (string, error) {
 	var p struct {
-		URL       string `json:"url"`
-		MaxLength int    `json:"max_length"`
+		URL       string  `json:"url"`
+		MaxLength flexInt `json:"max_length"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return "", err
@@ -40,7 +39,7 @@ func (w *WebFetch) Execute(ctx context.Context, params json.RawMessage) (string,
 		p.URL = "https://" + p.URL
 	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := sharedClient
 	req, err := http.NewRequestWithContext(ctx, "GET", p.URL, nil)
 	if err != nil {
 		return "", err
@@ -63,7 +62,7 @@ func (w *WebFetch) Execute(ctx context.Context, params json.RawMessage) (string,
 	}
 
 	text := htmlToText(string(body))
-	if len(text) > p.MaxLength {
+	if len(text) > int(p.MaxLength) {
 		text = text[:p.MaxLength] + "\n\n[truncated]"
 	}
 	return text, nil
@@ -92,13 +91,7 @@ func htmlToText(html string) string {
 	s = strings.ReplaceAll(s, "</h2>", "\n\n")
 	s = strings.ReplaceAll(s, "</h3>", "\n\n")
 	s = htmlTagRe.ReplaceAllString(s, "")
-	s = strings.ReplaceAll(s, "&amp;", "&")
-	s = strings.ReplaceAll(s, "&lt;", "<")
-	s = strings.ReplaceAll(s, "&gt;", ">")
-	s = strings.ReplaceAll(s, "&quot;", `"`)
-	s = strings.ReplaceAll(s, "&#x27;", "'")
-	s = strings.ReplaceAll(s, "&#39;", "'")
-	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = decodeHTMLEntities(s)
 	s = whitespaceRe.ReplaceAllString(s, " ")
 	s = blankLinesRe.ReplaceAllString(s, "\n\n")
 	return strings.TrimSpace(s)

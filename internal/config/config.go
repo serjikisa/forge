@@ -4,7 +4,7 @@ package config
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -27,7 +27,7 @@ type Provider struct {
 	Region  string `json:"region,omitempty"`
 }
 
-func Load() *Config {
+func Load() (*Config, error) {
 	cfg := defaults()
 
 	path := configPath()
@@ -36,19 +36,19 @@ func Load() *Config {
 		if os.IsNotExist(err) {
 			createDefault(path, cfg)
 		}
-		return cfg
+		return cfg, nil
 	}
 
 	expanded := os.ExpandEnv(string(data))
 	if err := json.Unmarshal([]byte(expanded), cfg); err != nil {
-		log.Fatalf("config: %s: %v", path, err)
+		return nil, fmt.Errorf("config: %s: %w", path, err)
 	}
 
 	if cfg.MaxConcurrency < 1 {
 		cfg.MaxConcurrency = 5
 	}
 
-	return cfg
+	return cfg, nil
 }
 
 func createDefault(path string, cfg *Config) {
@@ -68,12 +68,12 @@ func defaults() *Config {
 		DefaultProvider: "ollama",
 		Theme:           "vibrant",
 		LogLevel:        getEnv("FORGE_LOG_LEVEL", "info"),
-		LogFormat:        getEnv("FORGE_LOG_FORMAT", "pretty"),
+		LogFormat:       getEnv("FORGE_LOG_FORMAT", "pretty"),
 		MaxConcurrency:  5,
 		Providers: map[string]Provider{
 			"ollama": {
 				Host:  "http://localhost:11434",
-				Model: "", // auto-detect from installed models
+				Model: "",
 			},
 		},
 	}
@@ -91,10 +91,10 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func MustGetEnv(key string) string {
+func GetEnv(key string) (string, error) {
 	val, ok := os.LookupEnv(key)
 	if !ok {
-		log.Fatalf("required environment variable %s is not set", key)
+		return "", fmt.Errorf("required environment variable %s is not set", key)
 	}
-	return val
+	return val, nil
 }

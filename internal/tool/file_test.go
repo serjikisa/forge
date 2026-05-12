@@ -17,6 +17,7 @@ func TestReadFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		os.WriteFile("test.txt", []byte("hello world"), 0o644)
@@ -34,6 +35,7 @@ func TestReadFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		os.WriteFile("bin.dat", []byte("abc\x00def"), 0o644)
@@ -51,6 +53,7 @@ func TestReadFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		os.WriteFile("empty.txt", []byte{}, 0o644)
@@ -68,6 +71,7 @@ func TestReadFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		r := &ReadFile{}
@@ -93,6 +97,7 @@ func TestWriteFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		w := &WriteFile{}
@@ -113,6 +118,7 @@ func TestWriteFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		w := &WriteFile{}
@@ -129,6 +135,7 @@ func TestWriteFile_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		w := &WriteFile{}
@@ -161,6 +168,7 @@ func TestListDir_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		os.WriteFile("a.txt", []byte("a"), 0o644)
@@ -183,6 +191,7 @@ func TestListDir_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		os.WriteFile("marker.txt", []byte("x"), 0o644)
@@ -201,6 +210,7 @@ func TestListDir_Execute(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 
 		for i := 0; i < 205; i++ {
@@ -244,6 +254,7 @@ func TestReadFile_BoundaryCheck(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 		// Create .git so this dir is the project root
 		os.Mkdir(".git", 0o755)
@@ -274,6 +285,7 @@ func TestListDir_BoundaryCheck(t *testing.T) {
 		dir := t.TempDir()
 		old, _ := os.Getwd()
 		os.Chdir(dir)
+		ResetProjectDir()
 		defer os.Chdir(old)
 		os.Mkdir(".git", 0o755)
 		os.Mkdir("subdir", 0o755)
